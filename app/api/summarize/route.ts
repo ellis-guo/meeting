@@ -1,27 +1,26 @@
 import { NextRequest, NextResponse } from "next/server";
 
-const RULES = `RULES:
-1. Only record what was explicitly stated or decided. Never infer attitudes, emotions, or character.
-2. Never write judgmental statements like "X showed a lack of confidence" or "this exposes poor communication".
-3. source_lines must reference real line numbers from the transcript — never fabricate them.
-4. Output ONLY valid JSON. No markdown, no code blocks, no explanation.
-5. Detect the dominant language of the transcript and write all summary text in that language. For mixed-language transcripts, use the dominant language but preserve specific technical terms, academic vocabulary, or proper nouns in their original language as used in the transcript.
-6. Be concise and structured. Avoid colloquial or verbose phrasing. Use formal written Chinese.
-7. For all text fields, prefer phrases over full sentences.`;
+const RULES = `规则：
+1. 仅输出合法的 JSON，不得包含 Markdown、代码块或任何解释性文字。
+2. 仅记录会议中明确陈述或决定的内容，不推断态度、情绪或人物性格，禁止出现评判性表述，例如"X缺乏自信"或"此问题暴露了沟通不畅"。
+3. source_lines 必须引用原文中真实存在的行号，禁止虚构。
+4. 检测会议记录的主导语言，所有摘要文本使用该语言输出。若会议为多语言混合，以主导语言为准，但保留原文中出现的专业术语、学术词汇及专有名词。
+5. 表达简洁规范，避免口语化或冗长表述，使用正式书面语。
+6. 所有文本字段优先使用短语，而非完整句子。`;
 
-const CONTENT_TYPE_GUIDE = `CONTENT TYPES — choose the most appropriate type for each section's content:
-- "text": a single paragraph or statement (e.g. meeting overview, a brief conclusion)
-- "bullets": multiple distinct points. Each bullet may optionally have sub_items for nested detail.
-- "table": when content has clear uniform columns across all rows (e.g. person / task / deadline). Only use table when ALL rows share the same column structure.
+const CONTENT_TYPE_GUIDE = `内容类型说明 — 根据每个章节的内容选择最合适的类型：
+- "text"：单段落或单条陈述（如会议概述、简短结论）
+- "bullets"：多个独立要点。每条 bullet 可选包含 sub_items 用于嵌套细节。
+- "table"：当内容具有清晰统一的列结构时使用（如 负责人 / 任务 / 截止日期）。仅当所有行共享相同列结构时才使用 table。
 
-Schema for each type:
+重要：sub_items 为可选字段。当一个要点包含多个独立子内容时使用，禁止用分号将其合并为一条。
+
+各类型 Schema：
   { "type": "text", "value": "string", "source_lines": [number] }
   { "type": "bullets", "items": [{ "text": "string", "source_lines": [number], "sub_items": [{ "text": "string", "source_lines": [number] }] }] }
-  { "type": "table", "columns": ["string"], "rows": [{ "cells": ["string"], "source_lines": [number] }] }
+  { "type": "table", "columns": ["string"], "rows": [{ "cells": ["string"], "source_lines": [number] }] }`;
 
-Note: sub_items is optional. Use it when a bullet point contains multiple distinct sub-points — do NOT collapse them with semicolons.`;
-
-const SHARED_SCHEMA = `OUTPUT SCHEMA:
+const SHARED_SCHEMA = `输出 Schema：
 {
   "meta": {
     "date": "string or null",
@@ -31,13 +30,13 @@ const SHARED_SCHEMA = `OUTPUT SCHEMA:
   "sections": [
     {
       "title": "string",
-      "content": <one of the three content types above>
+      "content": <以上三种内容类型之一>
     }
   ],
   "humanistic_note": "string or null"
 }`;
 
-const SMART_PROMPT = `You are a meeting summarization assistant. Analyze the transcript and produce a structured summary.
+const SMART_PROMPT = `你是一位专业的会议记录助手，擅长从口语化的会议记录中提炼关键信息，以结构化、正式书面语的方式输出会议摘要。
 
 ${RULES}
 
@@ -45,15 +44,20 @@ ${CONTENT_TYPE_GUIDE}
 
 ${SHARED_SCHEMA}
 
-GUIDELINES:
-- meta.date: extract from transcript or context if mentioned, otherwise null
-- meta.time: extract meeting start time from transcript if mentioned, otherwise null
-- meta.participants: extract all speaker names from the transcript
-- sections: decide freely how many sections, what to title them, and which content type best presents each section's data
-- The main discussion content is the core of the summary — cover it thoroughly with sufficient detail and sub-points
-- humanistic_note: if someone mentioned illness, stress, fatigue, or a personal hardship, write one warm sentence speaking directly to that person, as if the tool itself cares about them; otherwise null`;
+输出指引：
+- meta.date：从会议记录或上下文中提取日期，若未提及则为 null
+- meta.time：从会议记录中提取会议开始时间，若未提及则为 null
+- meta.participants：提取会议记录中出现的所有发言者姓名
+- sections：自行决定章节数量、标题及最合适的内容类型，完整呈现会议讨论内容
+- 主要讨论内容是摘要的核心，须涵盖充分的细节与子要点
+- humanistic_note：若会议中出现与情绪相关的内容（包括正面或负面），如答辩、应聘、赶DDL、生病、疲惫、困难、焦虑等，用一句20个字以内的话直接表达关怀，语气真诚温暖；否则为 null。
+  示例：
+  - "Ellis，注意到你生病了，保重身体。"
+  - "大家辛苦了，注意劳逸结合~"
+  - "预祝你答辩顺利！"
+  - "Hope you feel better soon, David."`;
 
-const PROJECT_PROMPT = `You are a meeting summarization assistant. Analyze the transcript and produce a structured summary for a project progress meeting.
+const PROJECT_PROMPT = `你是一位专业的会议记录助手，擅长从口语化的项目进度会议记录中提炼关键信息，以结构化、正式书面语的方式输出会议摘要。
 
 ${RULES}
 
@@ -61,19 +65,24 @@ ${CONTENT_TYPE_GUIDE}
 
 ${SHARED_SCHEMA}
 
-GUIDELINES:
-- meta.date: extract from transcript or context if mentioned, otherwise null
-- meta.time: extract meeting start time from transcript if mentioned, otherwise null
-- meta.participants: extract all speaker names from the transcript
-- sections: always include the following (skip only if truly not applicable):
-    1. 会议概述 — "text" type; one short paragraph
-    2. 议题详情 — the most important section; cover every topic discussed with full detail; use sub_items to break down multi-point topics; do not collapse distinct points with semicolons
-    3. 行动项 — "table" if all items have uniform owner/task structure; otherwise "bullets"; keep task descriptions concise
-    4. 下次会议 — "text" type; only if mentioned
-    5. 其他 — "text" type; only if applicable
-  You may add additional sections if warranted.
-- The 议题详情 section should be the longest and most detailed section in the summary.
-- humanistic_note: if someone mentioned illness, stress, fatigue, or a personal hardship, write one warm sentence speaking directly to that person, as if the tool itself cares about them; otherwise null`;
+输出指引：
+- meta.date：从会议记录或上下文中提取日期，若未提及则为 null
+- meta.time：从会议记录中提取会议开始时间，若未提及则为 null
+- meta.participants：提取会议记录中出现的所有发言者姓名
+- sections：须包含以下章节（确实不适用时可跳过）：
+    1. 会议概述 — "text" 类型；一段简短概括
+    2. 议题详情 — 最重要的章节；涵盖每个讨论议题的完整细节；用 sub_items 拆解多要点议题；禁止用分号合并独立要点
+    3. 行动项 — 若所有条目具有统一的负责人/任务结构则用 "table"，否则用 "bullets"；任务描述保持简洁
+    4. 下次会议 — "text" 类型；仅在会议中提及时包含
+    5. 其他 — "text" 类型；仅在有其他内容时包含
+  如有必要可增加额外章节。
+- 议题详情 应为摘要中最长、最详细的章节
+- humanistic_note：若会议中出现与情绪相关的内容（包括正面或负面），如答辩、应聘、赶DDL、生病、疲惫、困难、焦虑等，用一句20个字以内的话直接表达关怀，语气真诚温暖；否则为 null。
+  示例：
+  - "Ellis，注意到你生病了，保重身体。"
+  - "大家辛苦了，注意劳逸结合~"
+  - "预祝你答辩顺利！"
+  - "Hope you feel better soon, David."`;
 
 function addLineNumbers(transcript: string): string {
   const lines = transcript.split("\n").filter((line) => line.trim() !== "");
@@ -90,7 +99,9 @@ export async function POST(req: NextRequest) {
     date ? `Meeting date: ${date}` : null,
     time ? `Meeting time: ${time}` : null,
     `Here is the meeting transcript:\n\n${numbered}`,
-  ].filter(Boolean).join("\n");
+  ]
+    .filter(Boolean)
+    .join("\n");
 
   const res = await fetch(
     "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions",
@@ -108,7 +119,7 @@ export async function POST(req: NextRequest) {
         ],
         enable_thinking: false,
       }),
-    }
+    },
   );
 
   const data = await res.json();
