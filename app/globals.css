@@ -24,3 +24,32 @@ body {
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
 }
+
+@media print {
+  html, body {
+    height: auto !important;
+    overflow: visible !important;
+    background: white !important;
+    color: black !important;
+  }
+
+  .h-screen {
+    height: auto !important;
+  }
+
+  .overflow-y-auto {
+    overflow: visible !important;
+    height: auto !important;
+    max-height: none !important;
+  }
+
+  span {
+    text-decoration: none !important;
+    cursor: default !important;
+  }
+
+  @page {
+    size: A4;
+    margin: 20mm;
+  }
+}
