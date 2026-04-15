@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 const RULES = `规则：
 1. 仅输出合法的 JSON，不得包含 Markdown、代码块或任何解释性文字。
 2. 仅记录会议中明确陈述或决定的内容，不推断态度、情绪或人物性格，禁止出现评判性表述，例如"X缺乏自信"或"此问题暴露了沟通不畅"。
-3. source_lines 必须引用原文中真实存在的行号，禁止虚构。
+3. source_lines 必须引用原文中真实存在的行号，禁止虚构；每一条内容都必须附带 source_lines，不得为空数组。
 4. 检测会议记录的主导语言，所有摘要文本使用该语言输出。若会议为多语言混合，以主导语言为准，但保留原文中出现的专业术语、学术词汇及专有名词。
 5. 表达简洁规范，避免口语化或冗长表述，使用正式书面语。
 6. 所有文本字段优先使用短语，而非完整句子。`;
@@ -49,12 +49,12 @@ ${SHARED_SCHEMA}
 - meta.time：从会议记录中提取会议开始时间，若未提及则为 null
 - meta.participants：提取会议记录中出现的所有发言者姓名
 - sections：自行决定章节数量、标题及最合适的内容类型，完整呈现会议讨论内容
-- 主要讨论内容是摘要的核心，须涵盖充分的细节与子要点
-- humanistic_note：若会议中出现与情绪相关的内容（包括正面或负面），如答辩、应聘、赶DDL、生病、疲惫、困难、焦虑等，用一句20个字以内的话直接表达关怀，语气真诚温暖；否则为 null。
+- 讨论内容是摘要的核心，每个议题须完整呈现各方观点及结论；若会议中讨论篇幅远多于分工安排，摘要的详细程度应与之成比例
+- humanistic_note：若会议中出现与情绪相关的内容（包括正面或负面），如答辩、应聘、赶DDL、生病、疲惫、困难、焦虑等，用一句20个字以内的话直接表达关怀，语气温暖积极；否则为 null。
   示例：
-  - "Ellis，注意到你生病了，保重身体。"
+  - "Ellis，注意到你生病了，保重身体喔！"
   - "大家辛苦了，注意劳逸结合~"
-  - "预祝你答辩顺利！"
+  - "预祝你们答辩顺利！"
   - "Hope you feel better soon, David."`;
 
 const PROJECT_PROMPT = `你是一位专业的会议记录助手，擅长从口语化的项目进度会议记录中提炼关键信息，以结构化、正式书面语的方式输出会议摘要。
@@ -77,11 +77,11 @@ ${SHARED_SCHEMA}
     5. 其他 — "text" 类型；仅在有其他内容时包含
   如有必要可增加额外章节。
 - 议题详情 应为摘要中最长、最详细的章节
-- humanistic_note：若会议中出现与情绪相关的内容（包括正面或负面），如答辩、应聘、赶DDL、生病、疲惫、困难、焦虑等，用一句20个字以内的话直接表达关怀，语气真诚温暖；否则为 null。
+- humanistic_note：若会议中出现与情绪相关的内容（包括正面或负面），如答辩、应聘、赶DDL、生病、疲惫、困难、焦虑等，用一句20个字以内的话直接表达关怀，语气温暖积极；否则为 null。
   示例：
-  - "Ellis，注意到你生病了，保重身体。"
+  - "Ellis，注意到你生病了，保重身体喔！"
   - "大家辛苦了，注意劳逸结合~"
-  - "预祝你答辩顺利！"
+  - "预祝你们答辩顺利！"
   - "Hope you feel better soon, David."`;
 
 function addLineNumbers(transcript: string): string {
@@ -98,7 +98,7 @@ export async function POST(req: NextRequest) {
   const contextLines = [
     date ? `Meeting date: ${date}` : null,
     time ? `Meeting time: ${time}` : null,
-    `Here is the meeting transcript:\n\n${numbered}`,
+    `以下是会议记录：\n\n${numbered}`,
   ]
     .filter(Boolean)
     .join("\n");

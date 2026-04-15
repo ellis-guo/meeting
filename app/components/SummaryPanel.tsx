@@ -354,7 +354,7 @@ export default function SummaryPanel({
 
       {/* Humanistic note */}
       {summary.humanistic_note && (
-        <div className="mt-8 p-4 bg-blue-50 dark:bg-blue-950/40 rounded-lg text-sm text-blue-700 dark:text-blue-300 leading-relaxed">
+        <div className="mt-8 p-4 bg-blue-50 dark:bg-blue-950/40 rounded-lg text-sm text-blue-700 dark:text-blue-300 leading-relaxed print:hidden">
           <EditableSpan
             value={summary.humanistic_note}
             isEditing={isEditing}
