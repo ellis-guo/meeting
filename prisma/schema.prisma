@@ -1,0 +1,41 @@
+generator client {
+  provider        = "prisma-client"
+  output          = "../app/generated/prisma"
+  previewFeatures = ["postgresqlExtensions"]
+}
+
+datasource db {
+  provider   = "postgresql"
+  url        = env("DATABASE_URL")
+  extensions = [vector]
+}
+
+model Project {
+  id              String    @id @default(uuid())
+  name            String
+  created_at      DateTime  @default(now())
+  reference_files Json      @default("[]")
+  document        Json      @default("{}")
+  meetings        Meeting[]
+}
+
+model Meeting {
+  id         String   @id @default(uuid())
+  project_id String?
+  created_at DateTime @default(now())
+  transcript String
+  summary    Json
+  project    Project? @relation(fields: [project_id], references: [id])
+  chunks     Chunk[]
+}
+
+model Chunk {
+  id            String                      @id @default(uuid())
+  meeting_id    String
+  project_id    String?
+  content       String
+  section_title String?
+  meeting_date  String?
+  embedding     Unsupported("vector(1536)")?
+  meeting       Meeting                     @relation(fields: [meeting_id], references: [id])
+}
