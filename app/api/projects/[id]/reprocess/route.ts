@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
+import { auth } from "@clerk/nextjs/server";
 import { prisma } from "@/lib/prisma";
 import { decryptJSON } from "@/lib/crypto";
+import { getDashScopeKey } from "@/lib/apiKey.server";
 
 function extractJSON(text: string): unknown {
   const start = text.indexOf("{");
@@ -28,14 +30,24 @@ const MEMORY_INIT_PROMPT = `你是一位专业的项目文档助手。根据用�
   "next_meeting_goals": "string or null"
 }`;
 
-// POST /api/projects/:id/reprocess — 重新处理参考文件，返回新草稿
 export async function POST(
   _req: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
+  const { userId } = await auth();
+  if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+  const apiKey = (await getDashScopeKey()) ?? process.env.DASHSCOPE_API_KEY ?? "";
+  if (!apiKey) {
+    return NextResponse.json(
+      { error: "API key required. Please configure your DashScope API key in Settings." },
+      { status: 401 },
+    );
+  }
+
   const { id } = await params;
 
-  const project = await prisma.project.findUnique({ where: { id } });
+  const project = await prisma.project.findFirst({ where: { id, user_id: userId } });
   if (!project) {
     return NextResponse.json({ error: "Project not found" }, { status: 404 });
   }
@@ -45,10 +57,7 @@ export async function POST(
     : [];
 
   if (referenceFiles.length === 0) {
-    return NextResponse.json(
-      { error: "No reference files to reprocess" },
-      { status: 400 },
-    );
+    return NextResponse.json({ error: "No reference files to reprocess" }, { status: 400 });
   }
 
   const fileContent = referenceFiles.join("\n\n---\n\n");
@@ -59,7 +68,7 @@ export async function POST(
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        Authorization: `Bearer ${process.env.DASHSCOPE_API_KEY}`,
+        Authorization: `Bearer ${apiKey}`,
       },
       body: JSON.stringify({
         model: "qwen3.6-plus",

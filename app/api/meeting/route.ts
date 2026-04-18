@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
+import { auth } from "@clerk/nextjs/server";
 import { prisma } from "@/lib/prisma";
 import { addLineNumbers } from "@/lib/utils";
 import { encrypt, decrypt, encryptJSON, decryptJSON } from "@/lib/crypto";
+import { getDashScopeKey } from "@/lib/apiKey.server";
 
 const RULES = `规则：
 1. 仅输出合法的 JSON，不得包含 Markdown、代码块或任何解释性文字。
@@ -117,6 +119,7 @@ const MEMORY_DIFF_PROMPT = `你是一位专业的项目文档维护助手。根�
 async function callDashScope(
   systemPrompt: string,
   userMessage: string,
+  apiKey: string,
 ): Promise<string> {
   const res = await fetch(
     "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions",
@@ -124,7 +127,7 @@ async function callDashScope(
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        Authorization: `Bearer ${process.env.DASHSCOPE_API_KEY}`,
+        Authorization: `Bearer ${apiKey}`,
       },
       body: JSON.stringify({
         model: "qwen3.6-plus",
@@ -293,14 +296,14 @@ function buildTranscriptChunks(
 
 // ── Embedding ────────────────────────────────────────────────────────────────
 
-async function fetchEmbeddings(texts: string[]): Promise<number[][]> {
+async function fetchEmbeddings(texts: string[], apiKey: string): Promise<number[][]> {
   const res = await fetch(
     "https://dashscope.aliyuncs.com/compatible-mode/v1/embeddings",
     {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        Authorization: `Bearer ${process.env.DASHSCOPE_API_KEY}`,
+        Authorization: `Bearer ${apiKey}`,
       },
       body: JSON.stringify({
         model: "text-embedding-v3",
@@ -320,6 +323,7 @@ async function fetchEmbeddings(texts: string[]): Promise<number[][]> {
 async function embedAndStore(
   chunks: Array<ChunkInput & { id: string }>,
   meetingId: string,
+  apiKey: string,
 ): Promise<void> {
   const BATCH = 10;
   for (let i = 0; i < chunks.length; i += BATCH) {
@@ -327,7 +331,7 @@ async function embedAndStore(
     const plainTexts = batch.map((c) => decrypt(c.content));
     let vectors: number[][];
     try {
-      vectors = await fetchEmbeddings(plainTexts);
+      vectors = await fetchEmbeddings(plainTexts, apiKey);
     } catch (e) {
       await prisma.processingLog.create({
         data: {
@@ -371,6 +375,17 @@ async function embedAndStore(
 // ── Route handler ─────────────────────────────────────────────────────────────
 
 export async function POST(req: NextRequest) {
+  const { userId } = await auth();
+  if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+  const apiKey = (await getDashScopeKey()) ?? process.env.DASHSCOPE_API_KEY ?? "";
+  if (!apiKey) {
+    return NextResponse.json(
+      { error: "API key required. Please configure your DashScope API key in Settings." },
+      { status: 401 },
+    );
+  }
+
   const {
     transcript,
     template = "smart",
@@ -388,7 +403,7 @@ export async function POST(req: NextRequest) {
 
   let project: { id: string; document: unknown } | null = null;
   if (project_id) {
-    const raw = await prisma.project.findUnique({ where: { id: project_id } });
+    const raw = await prisma.project.findFirst({ where: { id: project_id, user_id: userId } });
     if (!raw) {
       return NextResponse.json({ error: "Project not found" }, { status: 404 });
     }
@@ -410,7 +425,7 @@ export async function POST(req: NextRequest) {
   // Step 1: Generate summary
   let summaryContent: string;
   try {
-    summaryContent = await callDashScope(systemPrompt, contextLines);
+    summaryContent = await callDashScope(systemPrompt, contextLines, apiKey);
   } catch (e) {
     return NextResponse.json({ error: String(e) }, { status: 502 });
   }
@@ -429,6 +444,7 @@ export async function POST(req: NextRequest) {
   const today = new Date().toISOString().slice(0, 10);
   const meeting = await prisma.meeting.create({
     data: {
+      user_id: userId,
       transcript: encrypt(transcript),
       summary: encryptJSON(summary),
       project_id: project_id ?? null,
@@ -451,7 +467,7 @@ ${JSON.stringify(summary, null, 2)}
 
     let diffContent: string;
     try {
-      diffContent = await callDashScope(MEMORY_DIFF_PROMPT, userMessage);
+      diffContent = await callDashScope(MEMORY_DIFF_PROMPT, userMessage, apiKey);
       try {
         document_diff = extractJSON(diffContent);
       } catch {
@@ -516,7 +532,7 @@ ${JSON.stringify(summary, null, 2)}
     ...chunksToInsert[i],
     id: c.id,
   }));
-  await embedAndStore(chunksWithIds, meeting.id);
+  await embedAndStore(chunksWithIds, meeting.id, apiKey);
 
   const summaryCount = summaryChunkInputs.length;
   const transcriptCount = formatOk ? transcriptChunkInputs.length : 0;

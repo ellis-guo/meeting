@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
+import { auth } from "@clerk/nextjs/server";
 import { prisma } from "@/lib/prisma";
 import { encrypt, decrypt, encryptJSON } from "@/lib/crypto";
+import { getDashScopeKey } from "@/lib/apiKey.server";
 
 type ChunkInput = {
   meeting_id: string;
@@ -60,14 +62,14 @@ function buildFallbackChunks(
   return chunks;
 }
 
-async function fetchEmbeddings(texts: string[]): Promise<number[][]> {
+async function fetchEmbeddings(texts: string[], apiKey: string): Promise<number[][]> {
   const res = await fetch(
     "https://dashscope.aliyuncs.com/compatible-mode/v1/embeddings",
     {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        Authorization: `Bearer ${process.env.DASHSCOPE_API_KEY}`,
+        Authorization: `Bearer ${apiKey}`,
       },
       body: JSON.stringify({
         model: "text-embedding-v3",
@@ -88,9 +90,20 @@ export async function POST(
   _req: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
+  const { userId } = await auth();
+  if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+  const apiKey = (await getDashScopeKey()) ?? process.env.DASHSCOPE_API_KEY ?? "";
+  if (!apiKey) {
+    return NextResponse.json(
+      { error: "API key required. Please configure your DashScope API key in Settings." },
+      { status: 401 },
+    );
+  }
+
   const { id: meetingId } = await params;
 
-  const meeting = await prisma.meeting.findUnique({ where: { id: meetingId } });
+  const meeting = await prisma.meeting.findFirst({ where: { id: meetingId, user_id: userId } });
   if (!meeting) {
     return NextResponse.json({ error: "Meeting not found" }, { status: 404 });
   }
@@ -137,7 +150,7 @@ export async function POST(
     const plainTexts = inputs.map((c) => decrypt(c.content));
     let vectors: number[][];
     try {
-      vectors = await fetchEmbeddings(plainTexts);
+      vectors = await fetchEmbeddings(plainTexts, apiKey);
     } catch (e) {
       await prisma.processingLog.create({
         data: {

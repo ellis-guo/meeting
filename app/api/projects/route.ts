@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
+import { auth } from "@clerk/nextjs/server";
 import { prisma } from "@/lib/prisma";
 import { encryptJSON } from "@/lib/crypto";
+import { getDashScopeKey } from "@/lib/apiKey.server";
 
 const MEMORY_INIT_PROMPT = `你是一位专业的项目文档助手。根据用户提供的项目参考文件，提取关键信息，生成结构化的项目主文档。
 
@@ -28,7 +30,7 @@ function extractJSON(text: string): unknown {
   return JSON.parse(text.slice(start, end + 1));
 }
 
-async function generateDocumentFromFiles(referenceFiles: string[]): Promise<unknown> {
+async function generateDocumentFromFiles(referenceFiles: string[], apiKey: string): Promise<unknown> {
   const fileContent = referenceFiles.join("\n\n---\n\n");
 
   const res = await fetch(
@@ -37,7 +39,7 @@ async function generateDocumentFromFiles(referenceFiles: string[]): Promise<unkn
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        Authorization: `Bearer ${process.env.DASHSCOPE_API_KEY}`,
+        Authorization: `Bearer ${apiKey}`,
       },
       body: JSON.stringify({
         model: "qwen3.6-plus",
@@ -61,8 +63,10 @@ async function generateDocumentFromFiles(referenceFiles: string[]): Promise<unkn
   return extractJSON(content);
 }
 
-// POST /api/projects — 创建项目
 export async function POST(req: NextRequest) {
+  const { userId } = await auth();
+  if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
   const { name, reference_files = [] } = await req.json();
 
   if (!name?.trim()) {
@@ -71,6 +75,7 @@ export async function POST(req: NextRequest) {
 
   const project = await prisma.project.create({
     data: {
+      user_id: userId,
       name: name.trim(),
       reference_files: encryptJSON(reference_files),
       document: encryptJSON({}),
@@ -81,9 +86,17 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ project_id: project.id, document_draft: null });
   }
 
+  const apiKey = (await getDashScopeKey()) ?? process.env.DASHSCOPE_API_KEY ?? "";
+  if (!apiKey) {
+    return NextResponse.json(
+      { error: "API key required. Please configure your DashScope API key in Settings." },
+      { status: 401 },
+    );
+  }
+
   let document_draft: unknown;
   try {
-    document_draft = await generateDocumentFromFiles(reference_files);
+    document_draft = await generateDocumentFromFiles(reference_files, apiKey);
   } catch (e) {
     return NextResponse.json(
       { error: "Failed to generate document from reference files", detail: String(e) },
@@ -94,9 +107,12 @@ export async function POST(req: NextRequest) {
   return NextResponse.json({ project_id: project.id, document_draft });
 }
 
-// GET /api/projects — 项目列表
 export async function GET() {
+  const { userId } = await auth();
+  if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
   const projects = await prisma.project.findMany({
+    where: { user_id: userId },
     orderBy: { created_at: "desc" },
     select: { id: true, name: true, created_at: true },
   });

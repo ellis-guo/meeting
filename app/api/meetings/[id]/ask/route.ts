@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
+import { auth } from "@clerk/nextjs/server";
 import { prisma } from "@/lib/prisma";
 import { decrypt, decryptJSON } from "@/lib/crypto";
+import { getDashScopeKey } from "@/lib/apiKey.server";
 
 const ASK_SYSTEM_PROMPT = `你是一位会议助手，根据提供的会议摘要和逐字稿回答用户问题。
 规则：
@@ -24,14 +26,14 @@ function extractJSON(text: string): unknown {
   return JSON.parse(text.slice(start, end + 1));
 }
 
-async function callDashScope(systemPrompt: string, userMessage: string): Promise<string> {
+async function callDashScope(systemPrompt: string, userMessage: string, apiKey: string): Promise<string> {
   const res = await fetch(
     "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions",
     {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        Authorization: `Bearer ${process.env.DASHSCOPE_API_KEY}`,
+        Authorization: `Bearer ${apiKey}`,
       },
       body: JSON.stringify({
         model: "qwen3.6-plus",
@@ -53,14 +55,14 @@ async function callDashScope(systemPrompt: string, userMessage: string): Promise
   return content;
 }
 
-async function fetchEmbedding(text: string): Promise<number[]> {
+async function fetchEmbedding(text: string, apiKey: string): Promise<number[]> {
   const res = await fetch(
     "https://dashscope.aliyuncs.com/compatible-mode/v1/embeddings",
     {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        Authorization: `Bearer ${process.env.DASHSCOPE_API_KEY}`,
+        Authorization: `Bearer ${apiKey}`,
       },
       body: JSON.stringify({
         model: "text-embedding-v3",
@@ -81,6 +83,17 @@ export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
+  const { userId } = await auth();
+  if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+  const apiKey = (await getDashScopeKey()) ?? process.env.DASHSCOPE_API_KEY ?? "";
+  if (!apiKey) {
+    return NextResponse.json(
+      { error: "API key required. Please configure your DashScope API key in Settings." },
+      { status: 401 },
+    );
+  }
+
   const { id: meetingId } = await params;
   const { question } = await req.json();
 
@@ -88,7 +101,7 @@ export async function POST(
     return NextResponse.json({ error: "question is required" }, { status: 400 });
   }
 
-  const raw = await prisma.meeting.findUnique({ where: { id: meetingId } });
+  const raw = await prisma.meeting.findFirst({ where: { id: meetingId, user_id: userId } });
   if (!raw) {
     return NextResponse.json({ error: "Meeting not found" }, { status: 404 });
   }
@@ -106,7 +119,7 @@ export async function POST(
     const userMessage = `context：\n${context}\n\n问题：${question}`;
     let raw_answer: string;
     try {
-      raw_answer = await callDashScope(ASK_SYSTEM_PROMPT, userMessage);
+      raw_answer = await callDashScope(ASK_SYSTEM_PROMPT, userMessage, apiKey);
     } catch (e) {
       return NextResponse.json({ error: String(e) }, { status: 502 });
     }
@@ -119,7 +132,7 @@ export async function POST(
     // RAG path: vector search on this meeting's transcript chunks
     let queryVec: number[];
     try {
-      queryVec = await fetchEmbedding(question);
+      queryVec = await fetchEmbedding(question, apiKey);
     } catch (e) {
       return NextResponse.json({ error: String(e) }, { status: 502 });
     }
@@ -149,7 +162,7 @@ export async function POST(
     const userMessage = `相关逐字稿片段：\n${contextParts.join("\n\n---\n\n")}\n\n问题：${question}`;
     let raw_answer: string;
     try {
-      raw_answer = await callDashScope(ASK_SYSTEM_PROMPT, userMessage);
+      raw_answer = await callDashScope(ASK_SYSTEM_PROMPT, userMessage, apiKey);
     } catch (e) {
       return NextResponse.json({ error: String(e) }, { status: 502 });
     }

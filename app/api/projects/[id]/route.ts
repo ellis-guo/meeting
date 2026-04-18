@@ -1,16 +1,19 @@
 import { NextRequest, NextResponse } from "next/server";
+import { auth } from "@clerk/nextjs/server";
 import { prisma } from "@/lib/prisma";
 import { decryptJSON } from "@/lib/crypto";
 
-// GET /api/projects/:id — 项目详情 + 历史会议列表
 export async function GET(
   _req: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
+  const { userId } = await auth();
+  if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
   const { id } = await params;
 
-  const project = await prisma.project.findUnique({
-    where: { id },
+  const project = await prisma.project.findFirst({
+    where: { id, user_id: userId },
     include: {
       meetings: {
         orderBy: { created_at: "desc" },
@@ -34,19 +37,20 @@ export async function GET(
   });
 }
 
-// DELETE /api/projects/:id — 删除项目（级联删除会议和 chunks）
 export async function DELETE(
   _req: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
+  const { userId } = await auth();
+  if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
   const { id } = await params;
 
-  const project = await prisma.project.findUnique({ where: { id } });
+  const project = await prisma.project.findFirst({ where: { id, user_id: userId } });
   if (!project) {
     return NextResponse.json({ error: "Project not found" }, { status: 404 });
   }
 
-  // 手动级联：chunks → meetings → project
   const meetings = await prisma.meeting.findMany({ where: { project_id: id }, select: { id: true } });
   const meetingIds = meetings.map((m) => m.id);
 

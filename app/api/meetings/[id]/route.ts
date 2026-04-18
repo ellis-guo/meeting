@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { auth } from "@clerk/nextjs/server";
 import { prisma } from "@/lib/prisma";
 import { decrypt, encryptJSON, decryptJSON } from "@/lib/crypto";
 
@@ -6,10 +7,13 @@ export async function GET(
   _req: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
+  const { userId } = await auth();
+  if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
   const { id } = await params;
 
-  const meeting = await prisma.meeting.findUnique({
-    where: { id },
+  const meeting = await prisma.meeting.findFirst({
+    where: { id, user_id: userId },
     select: { id: true, created_at: true, transcript: true, summary: true, project_id: true },
   });
 
@@ -24,11 +28,13 @@ export async function GET(
   });
 }
 
-// PATCH /api/meetings/:id — 更新摘要
 export async function PATCH(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
+  const { userId } = await auth();
+  if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
   const { id } = await params;
   const { summary } = await req.json();
 
@@ -36,7 +42,7 @@ export async function PATCH(
     return NextResponse.json({ error: "summary is required" }, { status: 400 });
   }
 
-  const meeting = await prisma.meeting.findUnique({ where: { id } });
+  const meeting = await prisma.meeting.findFirst({ where: { id, user_id: userId } });
   if (!meeting) {
     return NextResponse.json({ error: "Meeting not found" }, { status: 404 });
   }
@@ -49,14 +55,16 @@ export async function PATCH(
   return NextResponse.json({ id, summary });
 }
 
-// DELETE /api/meetings/:id — 删除会议
 export async function DELETE(
   _req: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
+  const { userId } = await auth();
+  if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
   const { id } = await params;
 
-  const meeting = await prisma.meeting.findUnique({ where: { id } });
+  const meeting = await prisma.meeting.findFirst({ where: { id, user_id: userId } });
   if (!meeting) {
     return NextResponse.json({ error: "Meeting not found" }, { status: 404 });
   }
