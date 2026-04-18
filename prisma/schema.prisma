@@ -40,6 +40,7 @@ model Chunk {
   line_start    Int?
   line_end      Int?
   meeting_date  String?
+  search_text   String?
   embedding     Unsupported("vector(1024)")?
   meeting       Meeting                      @relation(fields: [meeting_id], references: [id])
 }

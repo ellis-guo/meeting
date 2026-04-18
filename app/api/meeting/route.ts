@@ -197,6 +197,7 @@ type ChunkInput = {
   project_id: string | null;
   chunk_type: string;
   content: string;
+  search_text: string | null;
   section_title: string | null;
   speaker: string | null;
   line_start: number | null;
@@ -217,6 +218,7 @@ function buildSummaryChunks(
       project_id: projectId ?? null,
       chunk_type: "summary",
       content: encrypt(plainText),
+      search_text: plainText,
       section_title: section.title,
       speaker: null,
       line_start: lines.length ? Math.min(...lines) : null,
@@ -270,17 +272,21 @@ function buildTranscriptChunks(
 
   const merged = mergeShortTurns(turns, 200);
 
-  const chunks: ChunkInput[] = merged.map((turn) => ({
-    meeting_id: meetingId,
-    project_id: projectId ?? null,
-    chunk_type: "transcript",
-    content: encrypt(`${turn.speaker}：${turn.text}`),
-    section_title: null,
-    speaker: turn.speaker,
-    line_start: turn.lineStart,
-    line_end: turn.lineEnd,
-    meeting_date: meetingDate ?? null,
-  }));
+  const chunks: ChunkInput[] = merged.map((turn) => {
+    const plainText = `${turn.speaker}：${turn.text}`;
+    return {
+      meeting_id: meetingId,
+      project_id: projectId ?? null,
+      chunk_type: "transcript",
+      content: encrypt(plainText),
+      search_text: plainText,
+      section_title: null,
+      speaker: turn.speaker,
+      line_start: turn.lineStart,
+      line_end: turn.lineEnd,
+      meeting_date: meetingDate ?? null,
+    };
+  });
 
   return { chunks, matchedLines, totalLines: lines.length };
 }
@@ -494,6 +500,7 @@ ${JSON.stringify(summary, null, 2)}
           project_id: c.project_id,
           chunk_type: c.chunk_type,
           content: c.content,
+          search_text: c.search_text,
           section_title: c.section_title,
           speaker: c.speaker,
           line_start: c.line_start,

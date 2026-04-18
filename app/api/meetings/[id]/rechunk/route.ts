@@ -7,6 +7,7 @@ type ChunkInput = {
   project_id: string | null;
   chunk_type: string;
   content: string;
+  search_text: string | null;
   section_title: null;
   speaker: null;
   line_start: number | null;
@@ -33,6 +34,7 @@ function buildFallbackChunks(
         project_id: projectId,
         chunk_type: "transcript",
         content: encrypt(text),
+        search_text: text,
         section_title: null,
         speaker: null,
         line_start: lineStart,
@@ -116,6 +118,7 @@ export async function POST(
           project_id: c.project_id,
           chunk_type: c.chunk_type,
           content: c.content,
+          search_text: c.search_text,
           section_title: c.section_title,
           speaker: c.speaker,
           line_start: c.line_start,
