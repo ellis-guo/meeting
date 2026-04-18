@@ -5,14 +5,22 @@ import Link from "next/link";
 import { UserButton } from "@clerk/nextjs";
 import { Project } from "./types";
 
+type StandaloneMeeting = { id: string; created_at: string; date: string | null };
+
 export default function Home() {
   const [projects, setProjects] = useState<Project[]>([]);
+  const [standaloneMeetings, setStandaloneMeetings] = useState<StandaloneMeeting[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    fetch("/api/projects")
-      .then((r) => r.json())
-      .then((data) => setProjects(data.projects ?? []))
+    Promise.all([
+      fetch("/api/projects").then((r) => r.json()),
+      fetch("/api/meeting").then((r) => r.json()),
+    ])
+      .then(([projectsData, meetingsData]) => {
+        setProjects(projectsData.projects ?? []);
+        setStandaloneMeetings(meetingsData.meetings ?? []);
+      })
       .finally(() => setLoading(false));
   }, []);
 
@@ -96,6 +104,29 @@ export default function Home() {
             </div>
           )}
         </section>
+
+        {/* Standalone meetings section */}
+        {!loading && standaloneMeetings.length > 0 && (
+          <section className="space-y-4">
+            <h2 className="text-sm font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wide">独立会议记录</h2>
+            <div className="space-y-2">
+              {standaloneMeetings.map((m) => (
+                <Link
+                  key={m.id}
+                  href={`/meetings/${m.id}`}
+                  className="flex items-center justify-between rounded-xl border border-gray-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 px-5 py-4 hover:border-blue-300 dark:hover:border-blue-700 hover:shadow-sm transition-all"
+                >
+                  <div className="text-sm text-gray-700 dark:text-gray-300">
+                    {m.date ?? new Date(m.created_at).toLocaleDateString("zh-CN")}
+                  </div>
+                  <div className="text-xs text-gray-400 dark:text-gray-500">
+                    {new Date(m.created_at).toLocaleDateString("zh-CN")}
+                  </div>
+                </Link>
+              ))}
+            </div>
+          </section>
+        )}
       </main>
     </div>
   );

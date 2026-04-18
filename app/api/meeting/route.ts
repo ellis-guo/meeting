@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@clerk/nextjs/server";
 import { prisma } from "@/lib/prisma";
 import { addLineNumbers } from "@/lib/utils";
-import { encrypt, decrypt, encryptJSON, decryptJSON } from "@/lib/crypto";
+import { encrypt, encryptJSON, decryptJSON } from "@/lib/crypto";
 import { getDashScopeKey } from "@/lib/apiKey.server";
 
 const RULES = `规则：
@@ -55,10 +55,7 @@ ${SHARED_SCHEMA}
 - meta.participants：提取会议记录中出现的所有发言者姓名
 - sections：自行决定章节数量、标题及最合适的内容类型，完整呈现会议讨论内容
 - 讨论内容是摘要的核心，每个议题须完整呈现各方观点及结论；若会议中讨论篇幅远多于分工安排，摘要的详细程度应与之成比例
-- humanistic_note：仅当会议中有人明确、反复提到身体不适（生病、头疼、发烧等）或明显沮丧（想哭、很难过、崩溃等）时触发，门槛要高，模糊信号一律返回 null。触发时用一句15字以内的话表达简单关心或祝福；绝对不提情绪本身、不做任何情绪分析、不贴标签；否则为 null。
-  示例：
-  - "（触发：生病）Ellis，好好休息，早日康复！"
-  - "（触发：沮丧）李总，加油，祝顺利。"`;
+- humanistic_note：仅当会议中有人明确、反复提到身体不适（生病、头疼、发烧等）或明显沮丧（想哭、很难过、崩溃等）时触发，门槛要高，模糊信号一律返回 null。触发时用一句15字以内的话表达简单关心或祝福；绝对不提情绪本身、不做任何情绪分析、不贴标签；否则为 null。`;
 
 const SUMMARY_PROGRESS_PROMPT = `你是一位专业的会议记录助手，擅长从口语化的项目进度会议记录中提炼关键信息，以结构化、正式书面语的方式输出会议摘要。
 
@@ -80,17 +77,12 @@ ${SHARED_SCHEMA}
     5. 其他 — "text" 类型；仅在有其他内容时包含
   如有必要可增加额外章节。
 - 议题详情 应为摘要中最长、最详细的章节
-- humanistic_note：仅当会议中有人明确、反复提到身体不适（生病、头疼、发烧等）或明显沮丧（想哭、很难过、崩溃等）时触发，门槛要高，模糊信号一律返回 null。触发时用一句15字以内的话表达简单关心或祝福；绝对不提情绪本身、不做任何情绪分析、不贴标签；否则为 null。
-  示例：
-  - "（触发：生病）Ellis，好好休息，早日康复！"
-  - "（触发：沮丧）李总，加油，祝顺利。"`;
+- humanistic_note：仅当会议中有人明确、反复提到身体不适（生病、头疼、发烧等）或明显沮丧（想哭、很难过、崩溃等）时触发，门槛要高，模糊信号一律返回 null。触发时用一句15字以内的话表达简单关心或祝福；绝对不提情绪本身、不做任何情绪分析、不贴标签；否则为 null。`;
 
 function extractJSON(text: string): unknown {
   const start = text.indexOf("{");
   const end = text.lastIndexOf("}");
-  if (start === -1 || end === -1 || end <= start) {
-    throw new Error("No valid JSON object found in response");
-  }
+  if (start === -1 || end === -1 || end <= start) throw new Error("No JSON found");
   return JSON.parse(text.slice(start, end + 1));
 }
 
@@ -116,113 +108,168 @@ const MEMORY_DIFF_PROMPT = `你是一位专业的项目文档维护助手。根�
   ]
 }`;
 
-async function callDashScope(
-  systemPrompt: string,
-  userMessage: string,
-  apiKey: string,
-): Promise<string> {
+async function callDashScope(systemPrompt: string, userMessage: string, apiKey: string): Promise<string> {
   const res = await fetch(
     "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions",
     {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${apiKey}`,
-      },
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
       body: JSON.stringify({
         model: "qwen3.6-plus",
-        messages: [
-          { role: "system", content: systemPrompt },
-          { role: "user", content: userMessage },
-        ],
+        messages: [{ role: "system", content: systemPrompt }, { role: "user", content: userMessage }],
         enable_thinking: false,
       }),
     },
   );
-
-  if (!res.ok) {
-    const err = await res.text();
-    throw new Error(`DashScope API error: ${res.status} — ${err}`);
-  }
-
+  if (!res.ok) throw new Error(`DashScope API error: ${res.status} — ${await res.text()}`);
   const data = await res.json();
   const content = data.choices?.[0]?.message?.content;
   if (!content) throw new Error("Empty response from model");
   return content;
 }
 
-// ── Chunk building ────────────────────────────────────────────────────────────
+async function callDashScopeStream(
+  systemPrompt: string,
+  userMessage: string,
+  apiKey: string,
+  onToken: (text: string) => void,
+): Promise<string> {
+  const res = await fetch(
+    "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions",
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+      body: JSON.stringify({
+        model: "qwen3.6-plus",
+        messages: [{ role: "system", content: systemPrompt }, { role: "user", content: userMessage }],
+        enable_thinking: false,
+        stream: true,
+      }),
+    },
+  );
+  if (!res.ok) throw new Error(`DashScope API error: ${res.status} — ${await res.text()}`);
+
+  const reader = res.body!.getReader();
+  const decoder = new TextDecoder();
+  let fullText = "";
+  let buf = "";
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buf += decoder.decode(value, { stream: true });
+    const lines = buf.split("\n");
+    buf = lines.pop() ?? "";
+    for (const line of lines) {
+      if (!line.startsWith("data: ")) continue;
+      const payload = line.slice(6).trim();
+      if (payload === "[DONE]") continue;
+      try {
+        const chunk: string = (JSON.parse(payload) as { choices?: Array<{ delta?: { content?: string } }> }).choices?.[0]?.delta?.content ?? "";
+        if (chunk) { fullText += chunk; onToken(chunk); }
+      } catch { /* skip */ }
+    }
+  }
+  return fullText;
+}
+
+// ── Streaming JSON helpers ────────────────────────────────────────────────────
+// Extract a complete {...} object starting at `start`. Returns null if incomplete.
+function extractObject(text: string, start: number): string | null {
+  if (text[start] !== "{") return null;
+  let depth = 0, inString = false, escape = false;
+  for (let i = start; i < text.length; i++) {
+    const c = text[i];
+    if (escape) { escape = false; continue; }
+    if (c === "\\" && inString) { escape = true; continue; }
+    if (c === '"') { inString = !inString; continue; }
+    if (!inString) {
+      if (c === "{") depth++;
+      else if (c === "}") { depth--; if (depth === 0) return text.slice(start, i + 1); }
+    }
+  }
+  return null;
+}
 
 type SectionContent =
   | { type: "text"; value: string; source_lines: number[] }
   | { type: "bullets"; items: Array<{ text: string; source_lines: number[]; sub_items?: Array<{ text: string; source_lines: number[] }> }> }
   | { type: "table"; columns: string[]; rows: Array<{ cells: string[]; source_lines: number[] }> };
-
 type Section = { title: string; content: SectionContent };
-
 type Summary = {
   meta: { date: string | null; time: string | null; participants: string[] };
   sections: Section[];
   humanistic_note: string | null;
 };
 
+// Extract complete sections from accumulated streaming text. Returns only fully-closed section objects.
+function extractCompleteSections(text: string, alreadyEmitted: number): Section[] {
+  const sectionsKeyIdx = text.indexOf('"sections"');
+  if (sectionsKeyIdx === -1) return [];
+  const bracketIdx = text.indexOf("[", sectionsKeyIdx);
+  if (bracketIdx === -1) return [];
+
+  const result: Section[] = [];
+  let pos = bracketIdx + 1;
+  let found = 0;
+
+  while (pos < text.length) {
+    while (pos < text.length && /[\s,]/.test(text[pos])) pos++;
+    if (pos >= text.length || text[pos] !== "{") break;
+    const objStr = extractObject(text, pos);
+    if (!objStr) break; // this section is incomplete — stop here
+    found++;
+    if (found > alreadyEmitted) {
+      try { result.push(JSON.parse(objStr) as Section); } catch { break; }
+    }
+    pos += objStr.length;
+  }
+
+  return result;
+}
+
+// Extract meta once its object is fully closed.
+function extractMeta(text: string): Summary["meta"] | null {
+  const keyIdx = text.indexOf('"meta"');
+  if (keyIdx === -1) return null;
+  const braceIdx = text.indexOf("{", keyIdx);
+  if (braceIdx === -1) return null;
+  const objStr = extractObject(text, braceIdx);
+  if (!objStr) return null;
+  try { return JSON.parse(objStr) as Summary["meta"]; } catch { return null; }
+}
+
+// ── Chunk building ────────────────────────────────────────────────────────────
+type ChunkInput = {
+  meeting_id: string; project_id: string | null; chunk_type: string;
+  content: string; search_text: string | null; section_title: string | null;
+  speaker: string | null; line_start: number | null; line_end: number | null; meeting_date: string | null;
+};
+
 function renderSectionText(section: Section): string {
   const c = section.content;
   if (c.type === "text") return c.value;
-  if (c.type === "bullets") {
-    return c.items
-      .map((item) => {
-        const subs = item.sub_items?.map((s) => `  - ${s.text}`).join("\n") ?? "";
-        return subs ? `- ${item.text}\n${subs}` : `- ${item.text}`;
-      })
-      .join("\n");
-  }
-  // table
-  const header = c.columns.join(" | ");
-  const rows = c.rows.map((r) => r.cells.join(" | ")).join("\n");
-  return `${header}\n${rows}`;
+  if (c.type === "bullets") return c.items.map((item) => {
+    const subs = item.sub_items?.map((s) => `  - ${s.text}`).join("\n") ?? "";
+    return subs ? `- ${item.text}\n${subs}` : `- ${item.text}`;
+  }).join("\n");
+  return `${c.columns.join(" | ")}\n${c.rows.map((r) => r.cells.join(" | ")).join("\n")}`;
 }
 
 function collectSourceLines(section: Section): number[] {
   const c = section.content;
   if (c.type === "text") return c.source_lines;
-  if (c.type === "bullets") {
-    return c.items.flatMap((item) => [
-      ...item.source_lines,
-      ...(item.sub_items?.flatMap((s) => s.source_lines) ?? []),
-    ]);
-  }
+  if (c.type === "bullets") return c.items.flatMap((i) => [...i.source_lines, ...(i.sub_items?.flatMap((s) => s.source_lines) ?? [])]);
   return c.rows.flatMap((r) => r.source_lines);
 }
 
-type ChunkInput = {
-  meeting_id: string;
-  project_id: string | null;
-  chunk_type: string;
-  content: string;
-  search_text: string | null;
-  section_title: string | null;
-  speaker: string | null;
-  line_start: number | null;
-  line_end: number | null;
-  meeting_date: string | null;
-};
-
-function buildSummaryChunks(
-  summary: Summary,
-  meetingId: string,
-  projectId?: string,
-): ChunkInput[] {
+function buildSummaryChunks(summary: Summary, meetingId: string, projectId?: string): ChunkInput[] {
   return summary.sections.map((section) => {
     const plainText = `${section.title}\n${renderSectionText(section)}`;
     const lines = collectSourceLines(section);
     return {
-      meeting_id: meetingId,
-      project_id: projectId ?? null,
-      chunk_type: "summary",
-      content: encrypt(plainText),
-      search_text: plainText,
-      section_title: section.title,
+      meeting_id: meetingId, project_id: projectId ?? null, chunk_type: "summary",
+      content: plainText, search_text: plainText, section_title: section.title,
       speaker: null,
       line_start: lines.length ? Math.min(...lines) : null,
       line_end: lines.length ? Math.max(...lines) : null,
@@ -232,7 +279,6 @@ function buildSummaryChunks(
 }
 
 const TENCENT_TURN = /^(.+?)\((\d{2}:\d{2}:\d{2})\):\s*(.+)/;
-
 type Turn = { speaker: string; text: string; lineStart: number; lineEnd: number };
 
 function mergeShortTurns(turns: Turn[], maxChars: number): Turn[] {
@@ -240,310 +286,206 @@ function mergeShortTurns(turns: Turn[], maxChars: number): Turn[] {
   for (const turn of turns) {
     const last = merged[merged.length - 1];
     if (last && last.speaker === turn.speaker && last.text.length + turn.text.length < maxChars) {
-      last.text += "　" + turn.text;
-      last.lineEnd = turn.lineEnd;
-    } else {
-      merged.push({ ...turn });
-    }
+      last.text += "　" + turn.text; last.lineEnd = turn.lineEnd;
+    } else { merged.push({ ...turn }); }
   }
   return merged;
 }
 
-type TranscriptChunkResult = {
-  chunks: ChunkInput[];
-  matchedLines: number;
-  totalLines: number;
-};
-
-function buildTranscriptChunks(
-  transcript: string,
-  meetingId: string,
-  projectId?: string,
-  meetingDate?: string,
-): TranscriptChunkResult {
+function buildTranscriptChunks(transcript: string, meetingId: string, projectId?: string, meetingDate?: string) {
   const lines = transcript.split("\n").filter((l) => l.trim());
   const turns: Turn[] = [];
   let matchedLines = 0;
-
   for (let i = 0; i < lines.length; i++) {
     const m = lines[i].match(TENCENT_TURN);
-    if (m) {
-      matchedLines++;
-      turns.push({ speaker: m[1].trim(), text: m[3].trim(), lineStart: i + 1, lineEnd: i + 1 });
-    }
+    if (m) { matchedLines++; turns.push({ speaker: m[1].trim(), text: m[3].trim(), lineStart: i + 1, lineEnd: i + 1 }); }
   }
-
   const merged = mergeShortTurns(turns, 200);
-
   const chunks: ChunkInput[] = merged.map((turn) => {
     const plainText = `${turn.speaker}：${turn.text}`;
-    return {
-      meeting_id: meetingId,
-      project_id: projectId ?? null,
-      chunk_type: "transcript",
-      content: encrypt(plainText),
-      search_text: plainText,
-      section_title: null,
-      speaker: turn.speaker,
-      line_start: turn.lineStart,
-      line_end: turn.lineEnd,
-      meeting_date: meetingDate ?? null,
-    };
+    return { meeting_id: meetingId, project_id: projectId ?? null, chunk_type: "transcript", content: plainText, search_text: plainText, section_title: null, speaker: turn.speaker, line_start: turn.lineStart, line_end: turn.lineEnd, meeting_date: meetingDate ?? null };
   });
-
   return { chunks, matchedLines, totalLines: lines.length };
 }
 
 // ── Embedding ────────────────────────────────────────────────────────────────
-
 async function fetchEmbeddings(texts: string[], apiKey: string): Promise<number[][]> {
-  const res = await fetch(
-    "https://dashscope.aliyuncs.com/compatible-mode/v1/embeddings",
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify({
-        model: "text-embedding-v3",
-        input: texts,
-        dimension: 1024,
-      }),
-    },
-  );
-  if (!res.ok) {
-    const err = await res.text();
-    throw new Error(`Embedding API error: ${res.status} — ${err}`);
-  }
-  const data = await res.json();
-  return (data.data as Array<{ embedding: number[] }>).map((d) => d.embedding);
+  const res = await fetch("https://dashscope.aliyuncs.com/compatible-mode/v1/embeddings", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+    body: JSON.stringify({ model: "text-embedding-v3", input: texts, dimension: 1024 }),
+  });
+  if (!res.ok) throw new Error(`Embedding API error: ${res.status} — ${await res.text()}`);
+  return ((await res.json()).data as Array<{ embedding: number[] }>).map((d) => d.embedding);
 }
 
-async function embedAndStore(
-  chunks: Array<ChunkInput & { id: string }>,
-  meetingId: string,
-  apiKey: string,
-): Promise<void> {
+async function embedAndStore(chunks: Array<ChunkInput & { id: string }>, meetingId: string, apiKey: string) {
   const BATCH = 10;
   for (let i = 0; i < chunks.length; i += BATCH) {
     const batch = chunks.slice(i, i + BATCH);
-    const plainTexts = batch.map((c) => decrypt(c.content));
     let vectors: number[][];
-    try {
-      vectors = await fetchEmbeddings(plainTexts, apiKey);
-    } catch (e) {
-      await prisma.processingLog.create({
-        data: {
-          level: "error",
-          meeting_id: meetingId,
-          context: encryptJSON({
-            type: "embedding_batch_failed",
-            batch_start: i,
-            batch_end: i + batch.length - 1,
-            detail: String(e),
-          }),
-        },
-      });
+    try { vectors = await fetchEmbeddings(batch.map((c) => c.content), apiKey); }
+    catch (e) {
+      await prisma.processingLog.create({ data: { level: "error", meeting_id: meetingId, context: encryptJSON({ type: "embedding_batch_failed", batch_start: i, detail: String(e) }) } });
       continue;
     }
-
     for (let j = 0; j < batch.length; j++) {
-      const chunkId = batch[j].id;
       const vec = `[${vectors[j].join(",")}]`;
-      try {
-        await prisma.$executeRaw`
-          UPDATE "Chunk" SET embedding = ${vec}::vector WHERE id = ${chunkId}
-        `;
-      } catch (e) {
-        await prisma.processingLog.create({
-          data: {
-            level: "error",
-            meeting_id: meetingId,
-            context: encryptJSON({
-              type: "embedding_write_failed",
-              chunk_id: chunkId,
-              detail: String(e),
-            }),
-          },
-        });
-      }
+      try { await prisma.$executeRaw`UPDATE "Chunk" SET embedding = ${vec}::vector WHERE id = ${batch[j].id}`; }
+      catch (e) { await prisma.processingLog.create({ data: { level: "error", meeting_id: meetingId, context: encryptJSON({ type: "embedding_write_failed", chunk_id: batch[j].id, detail: String(e) }) } }); }
     }
   }
 }
 
-// ── Route handler ─────────────────────────────────────────────────────────────
+// ── GET: list standalone meetings ─────────────────────────────────────────────
+export async function GET() {
+  const { userId } = await auth();
+  if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
+  const meetings = await prisma.meeting.findMany({
+    where: { user_id: userId, project_id: null },
+    select: { id: true, created_at: true, summary: true },
+    orderBy: { created_at: "desc" },
+    take: 20,
+  });
+
+  return NextResponse.json({
+    meetings: meetings.map((m) => {
+      let date: string | null = null;
+      try { date = (decryptJSON<{ meta?: { date?: string | null } }>(m.summary))?.meta?.date ?? null; } catch { /* ignore */ }
+      return { id: m.id, created_at: m.created_at, date };
+    }),
+  });
+}
+
+// ── POST: generate summary via SSE ────────────────────────────────────────────
 export async function POST(req: NextRequest) {
   const { userId } = await auth();
   if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const apiKey = (await getDashScopeKey()) ?? process.env.DASHSCOPE_API_KEY ?? "";
-  if (!apiKey) {
-    return NextResponse.json(
-      { error: "API key required. Please configure your DashScope API key in Settings." },
-      { status: 401 },
-    );
-  }
+  if (!apiKey) return NextResponse.json({ error: "API key required. Please configure your DashScope API key in Settings." }, { status: 401 });
 
-  const {
-    transcript,
-    template = "smart",
-    date,
-    time,
-    project_id,
-  } = await req.json();
-
-  if (!transcript?.trim()) {
-    return NextResponse.json(
-      { error: "transcript is required" },
-      { status: 400 },
-    );
-  }
+  const { transcript, template = "smart", date, time, project_id } = await req.json();
+  if (!transcript?.trim()) return NextResponse.json({ error: "transcript is required" }, { status: 400 });
 
   let project: { id: string; document: unknown } | null = null;
   if (project_id) {
     const raw = await prisma.project.findFirst({ where: { id: project_id, user_id: userId } });
-    if (!raw) {
-      return NextResponse.json({ error: "Project not found" }, { status: 404 });
-    }
+    if (!raw) return NextResponse.json({ error: "Project not found" }, { status: 404 });
     project = { id: raw.id, document: raw.document ? decryptJSON(raw.document) : {} };
   }
 
   const numbered = addLineNumbers(transcript);
-  const systemPrompt =
-    template === "project" ? SUMMARY_PROGRESS_PROMPT : SUMMARY_SMART_PROMPT;
+  const systemPrompt = template === "project" ? SUMMARY_PROGRESS_PROMPT : SUMMARY_SMART_PROMPT;
+  const contextLines = [date ? `Meeting date: ${date}` : null, time ? `Meeting time: ${time}` : null, `以下是会议记录：\n\n${numbered}`].filter(Boolean).join("\n");
 
-  const contextLines = [
-    date ? `Meeting date: ${date}` : null,
-    time ? `Meeting time: ${time}` : null,
-    `以下是会议记录：\n\n${numbered}`,
-  ]
-    .filter(Boolean)
-    .join("\n");
+  const encoder = new TextEncoder();
+  const send = (event: string, data: unknown) => encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
 
-  // Step 1: Generate summary
-  let summaryContent: string;
-  try {
-    summaryContent = await callDashScope(systemPrompt, contextLines, apiKey);
-  } catch (e) {
-    return NextResponse.json({ error: String(e) }, { status: 502 });
-  }
+  const body = new ReadableStream({
+    async start(controller) {
+      try {
+        let emittedMeta = false;
+        let emittedSectionCount = 0;
+        let accumulated = "";
 
-  let summary: unknown;
-  try {
-    summary = extractJSON(summaryContent);
-  } catch {
-    return NextResponse.json(
-      { error: "Failed to parse summary as JSON", raw: summaryContent },
-      { status: 502 },
-    );
-  }
+        // Stream LLM; after each token that closes a brace, check for newly complete sections/meta
+        let summaryContent: string;
+        try {
+          summaryContent = await callDashScopeStream(systemPrompt, contextLines, apiKey, (token) => {
+            accumulated += token;
+            if (!token.includes("}")) return;
 
-  // Save meeting (transcript and summary encrypted at rest)
-  const today = new Date().toISOString().slice(0, 10);
-  const meeting = await prisma.meeting.create({
-    data: {
-      user_id: userId,
-      transcript: encrypt(transcript),
-      summary: encryptJSON(summary),
-      project_id: project_id ?? null,
+            if (!emittedMeta) {
+              const meta = extractMeta(accumulated);
+              if (meta) { controller.enqueue(send("meta", meta)); emittedMeta = true; }
+            }
+
+            const newSections = extractCompleteSections(accumulated, emittedSectionCount);
+            for (const section of newSections) {
+              controller.enqueue(send("section", section));
+              emittedSectionCount++;
+            }
+          });
+        } catch (e) {
+          controller.enqueue(send("error", { error: String(e) }));
+          controller.close();
+          return;
+        }
+
+        // After stream ends: parse full JSON, emit any remaining sections
+        let summary: unknown;
+        try { summary = extractJSON(summaryContent); }
+        catch {
+          controller.enqueue(send("error", { error: "Failed to parse summary as JSON", raw: summaryContent }));
+          controller.close();
+          return;
+        }
+
+        const typedSummary = summary as Summary;
+
+        // Emit remaining sections (last section + any missed)
+        for (let i = emittedSectionCount; i < typedSummary.sections.length; i++) {
+          controller.enqueue(send("section", typedSummary.sections[i]));
+        }
+        // Emit meta if not emitted yet (very short transcripts)
+        if (!emittedMeta) {
+          controller.enqueue(send("meta", typedSummary.meta));
+        }
+
+        // Persist meeting
+        const today = new Date().toISOString().slice(0, 10);
+        const meeting = await prisma.meeting.create({
+          data: { user_id: userId, transcript: encrypt(transcript), summary: encryptJSON(summary), project_id: project_id ?? null },
+        });
+
+        // Diff (project only)
+        let document_diff: unknown = null;
+        let document_diff_error: string | undefined;
+        if (project) {
+          try {
+            const diffContent = await callDashScope(MEMORY_DIFF_PROMPT, `当前日期：${today}\n\n当前项目主文档：\n${JSON.stringify(project.document, null, 2)}\n\n本次会议摘要：\n${JSON.stringify(summary, null, 2)}\n\n请输出需要更新的字段及建议内容。`, apiKey);
+            try { document_diff = extractJSON(diffContent); } catch { document_diff = null; }
+          } catch (e) { document_diff_error = String(e); }
+        }
+
+        // Build & save chunks
+        const summaryChunkInputs = buildSummaryChunks(typedSummary, meeting.id, project_id);
+        const { chunks: transcriptChunkInputs, matchedLines, totalLines } =
+          buildTranscriptChunks(transcript, meeting.id, project_id, typedSummary.meta.date ?? undefined);
+
+        const formatOk = totalLines === 0 || matchedLines / totalLines >= 0.3;
+        let chunks_warning: { matched_lines: number; total_lines: number } | undefined;
+        if (!formatOk) {
+          chunks_warning = { matched_lines: matchedLines, total_lines: totalLines };
+          await prisma.processingLog.create({ data: { level: "warn", meeting_id: meeting.id, context: encryptJSON({ type: "transcript_format_mismatch", matched_lines: matchedLines, total_lines: totalLines }) } });
+        }
+
+        const chunksToInsert = formatOk ? [...summaryChunkInputs, ...transcriptChunkInputs] : summaryChunkInputs;
+        const createdChunks = await Promise.all(chunksToInsert.map((c) => prisma.chunk.create({ data: { meeting_id: c.meeting_id, project_id: c.project_id, chunk_type: c.chunk_type, content: c.content, search_text: c.search_text, section_title: c.section_title, speaker: c.speaker, line_start: c.line_start, line_end: c.line_end, meeting_date: c.meeting_date } })));
+        const chunksWithIds = createdChunks.map((c, i) => ({ ...chunksToInsert[i], id: c.id }));
+
+        controller.enqueue(send("done", {
+          meeting_id: meeting.id,
+          summary,
+          numbered_transcript: numbered,
+          document_diff,
+          ...(document_diff_error ? { document_diff_error } : {}),
+          chunks_indexed: { summary: summaryChunkInputs.length, transcript: formatOk ? transcriptChunkInputs.length : 0 },
+          ...(chunks_warning ? { chunks_warning } : {}),
+        }));
+
+        controller.close();
+        embedAndStore(chunksWithIds, meeting.id, apiKey).catch(() => {});
+
+      } catch (e) {
+        try { controller.enqueue(send("error", { error: String(e) })); controller.close(); } catch { /* already closed */ }
+      }
     },
   });
 
-  // Step 2 (serial): Prompt B diff if project
-  let document_diff: unknown = null;
-  let document_diff_error: string | undefined;
-  if (project) {
-    const userMessage = `当前日期：${today}
-
-当前项目主文档：
-${JSON.stringify(project.document, null, 2)}
-
-本次会议摘要：
-${JSON.stringify(summary, null, 2)}
-
-请输出需要更新的字段及建议内容。`;
-
-    let diffContent: string;
-    try {
-      diffContent = await callDashScope(MEMORY_DIFF_PROMPT, userMessage, apiKey);
-      try {
-        document_diff = extractJSON(diffContent);
-      } catch {
-        document_diff = null;
-      }
-    } catch (e) {
-      document_diff_error = String(e);
-    }
-  }
-
-  // Step 3: Build and store chunks
-  const typedSummary = summary as Summary;
-  const summaryChunkInputs = buildSummaryChunks(typedSummary, meeting.id, project_id);
-
-  const { chunks: transcriptChunkInputs, matchedLines, totalLines } =
-    buildTranscriptChunks(transcript, meeting.id, project_id, typedSummary.meta.date ?? undefined);
-
-  const formatOk = totalLines === 0 || matchedLines / totalLines >= 0.3;
-
-  let chunks_warning: { matched_lines: number; total_lines: number } | undefined;
-
-  if (!formatOk) {
-    chunks_warning = { matched_lines: matchedLines, total_lines: totalLines };
-    await prisma.processingLog.create({
-      data: {
-        level: "warn",
-        meeting_id: meeting.id,
-        context: encryptJSON({
-          type: "transcript_format_mismatch",
-          matched_lines: matchedLines,
-          total_lines: totalLines,
-        }),
-      },
-    });
-  }
-
-  const chunksToInsert = formatOk
-    ? [...summaryChunkInputs, ...transcriptChunkInputs]
-    : summaryChunkInputs;
-
-  const createdChunks = await Promise.all(
-    chunksToInsert.map((c) =>
-      prisma.chunk.create({
-        data: {
-          meeting_id: c.meeting_id,
-          project_id: c.project_id,
-          chunk_type: c.chunk_type,
-          content: c.content,
-          search_text: c.search_text,
-          section_title: c.section_title,
-          speaker: c.speaker,
-          line_start: c.line_start,
-          line_end: c.line_end,
-          meeting_date: c.meeting_date,
-        },
-      }),
-    ),
-  );
-
-  // Step 4: Embed and store vectors (non-blocking on failure)
-  const chunksWithIds = createdChunks.map((c, i) => ({
-    ...chunksToInsert[i],
-    id: c.id,
-  }));
-  await embedAndStore(chunksWithIds, meeting.id, apiKey);
-
-  const summaryCount = summaryChunkInputs.length;
-  const transcriptCount = formatOk ? transcriptChunkInputs.length : 0;
-
-  return NextResponse.json({
-    numbered_transcript: numbered,
-    summary,
-    meeting_id: meeting.id,
-    document_diff,
-    ...(document_diff_error ? { document_diff_error } : {}),
-    chunks_indexed: { summary: summaryCount, transcript: transcriptCount },
-    ...(chunks_warning ? { chunks_warning } : {}),
+  return new Response(body, {
+    headers: { "Content-Type": "text/event-stream", "Cache-Control": "no-cache", "Connection": "keep-alive" },
   });
 }

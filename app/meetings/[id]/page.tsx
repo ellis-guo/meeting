@@ -11,11 +11,10 @@ import { addLineNumbers } from "@/lib/utils";
 
 type PopupState = { sourceLines: number[]; x: number; y: number } | null;
 
-export default function MeetingDetailPage() {
+export default function StandaloneMeetingDetailPage() {
   const params = useParams();
   const router = useRouter();
-  const projectId = params.id as string;
-  const meetingId = params.meetingId as string;
+  const meetingId = params.id as string;
 
   const [summary, setSummary] = useState<Summary | null>(null);
   const [numberedTranscript, setNumberedTranscript] = useState<string | null>(null);
@@ -73,7 +72,7 @@ export default function MeetingDetailPage() {
     setDeleting(true);
     try {
       await fetch(`/api/meetings/${meetingId}`, { method: "DELETE" });
-      router.push(`/projects/${projectId}`);
+      router.push("/");
     } finally {
       setDeleting(false);
     }
@@ -91,7 +90,7 @@ export default function MeetingDetailPage() {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-50 dark:bg-zinc-950 flex-col gap-4">
         <p className="text-sm text-gray-500">会议记录不存在</p>
-        <Link href={`/projects/${projectId}`} className="text-sm text-blue-600 hover:underline">← 返回项目</Link>
+        <Link href="/" className="text-sm text-blue-600 hover:underline">← 返回首页</Link>
       </div>
     );
   }
@@ -103,10 +102,10 @@ export default function MeetingDetailPage() {
       <header className="flex items-center justify-between px-6 py-3 border-b border-gray-200 dark:border-zinc-800 shrink-0 print:hidden">
         <div className="flex items-center gap-3">
           <button
-            onClick={() => router.push(`/projects/${projectId}`)}
+            onClick={() => router.push("/")}
             className="text-sm text-gray-500 hover:text-gray-700 dark:hover:text-gray-200 transition-colors"
           >
-            ← 返回项目
+            ← 首页
           </button>
           <span className="text-gray-200 dark:text-zinc-700">|</span>
           <span className="text-sm text-gray-600 dark:text-gray-400">{date}</span>

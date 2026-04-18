@@ -47,13 +47,26 @@ export default function NewProjectPage() {
   const handleConfirmDraft = async () => {
     if (!projectId || !draft) return;
     setSaving(true);
+    setError(null);
     try {
+      // Normalize key_decisions: keep only entries with a valid YYYY-MM-DD date
+      const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
+      const cleanedDraft = {
+        ...draft,
+        key_decisions: (draft.key_decisions ?? []).filter(
+          (d) => d && typeof d.date === "string" && dateRegex.test(d.date),
+        ),
+      };
+
       const res = await fetch(`/api/projects/${projectId}/document`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ document: draft }),
+        body: JSON.stringify({ document: cleanedDraft }),
       });
-      if (!res.ok) throw new Error("保存失败");
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error((data as { error?: string }).error ?? "保存失败");
+      }
       router.push(`/projects/${projectId}`);
     } catch (e) {
       setError(String(e));

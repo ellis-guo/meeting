@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@clerk/nextjs/server";
 import { prisma } from "@/lib/prisma";
-import { encrypt, decrypt, encryptJSON } from "@/lib/crypto";
+import { decrypt, encryptJSON } from "@/lib/crypto";
 import { getDashScopeKey } from "@/lib/apiKey.server";
 
 type ChunkInput = {
@@ -35,7 +35,7 @@ function buildFallbackChunks(
         meeting_id: meetingId,
         project_id: projectId,
         chunk_type: "transcript",
-        content: encrypt(text),
+        content: text,
         search_text: text,
         section_title: null,
         speaker: null,
@@ -108,7 +108,6 @@ export async function POST(
     return NextResponse.json({ error: "Meeting not found" }, { status: 404 });
   }
 
-  // Delete existing transcript chunks for this meeting
   await prisma.chunk.deleteMany({
     where: { meeting_id: meetingId, chunk_type: "transcript" },
   });
@@ -142,12 +141,11 @@ export async function POST(
     ),
   );
 
-  // Embed and store vectors, batch size 10
   const BATCH = 10;
   for (let i = 0; i < created.length; i += BATCH) {
     const batch = created.slice(i, i + BATCH);
     const inputs = chunkInputs.slice(i, i + BATCH);
-    const plainTexts = inputs.map((c) => decrypt(c.content));
+    const plainTexts = inputs.map((c) => c.content);
     let vectors: number[][];
     try {
       vectors = await fetchEmbeddings(plainTexts, apiKey);
