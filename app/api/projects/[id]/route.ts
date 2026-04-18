@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { decryptJSON } from "@/lib/crypto";
 
 // GET /api/projects/:id — 项目详情 + 历史会议列表
 export async function GET(
@@ -22,7 +23,15 @@ export async function GET(
     return NextResponse.json({ error: "Project not found" }, { status: 404 });
   }
 
-  return NextResponse.json(project);
+  return NextResponse.json({
+    ...project,
+    document: project.document ? decryptJSON(project.document) : {},
+    reference_files: project.reference_files ? decryptJSON(project.reference_files) : [],
+    meetings: project.meetings.map((m) => ({
+      ...m,
+      summary: m.summary ? decryptJSON(m.summary) : null,
+    })),
+  });
 }
 
 // DELETE /api/projects/:id — 删除项目（级联删除会议和 chunks）

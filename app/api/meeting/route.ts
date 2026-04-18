@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { addLineNumbers } from "@/lib/utils";
+import { encrypt, decrypt, encryptJSON, decryptJSON } from "@/lib/crypto";
 
 const RULES = `规则：
 1. 仅输出合法的 JSON，不得包含 Markdown、代码块或任何解释性文字。
@@ -147,6 +148,222 @@ async function callDashScope(
   return content;
 }
 
+// ── Chunk building ────────────────────────────────────────────────────────────
+
+type SectionContent =
+  | { type: "text"; value: string; source_lines: number[] }
+  | { type: "bullets"; items: Array<{ text: string; source_lines: number[]; sub_items?: Array<{ text: string; source_lines: number[] }> }> }
+  | { type: "table"; columns: string[]; rows: Array<{ cells: string[]; source_lines: number[] }> };
+
+type Section = { title: string; content: SectionContent };
+
+type Summary = {
+  meta: { date: string | null; time: string | null; participants: string[] };
+  sections: Section[];
+  humanistic_note: string | null;
+};
+
+function renderSectionText(section: Section): string {
+  const c = section.content;
+  if (c.type === "text") return c.value;
+  if (c.type === "bullets") {
+    return c.items
+      .map((item) => {
+        const subs = item.sub_items?.map((s) => `  - ${s.text}`).join("\n") ?? "";
+        return subs ? `- ${item.text}\n${subs}` : `- ${item.text}`;
+      })
+      .join("\n");
+  }
+  // table
+  const header = c.columns.join(" | ");
+  const rows = c.rows.map((r) => r.cells.join(" | ")).join("\n");
+  return `${header}\n${rows}`;
+}
+
+function collectSourceLines(section: Section): number[] {
+  const c = section.content;
+  if (c.type === "text") return c.source_lines;
+  if (c.type === "bullets") {
+    return c.items.flatMap((item) => [
+      ...item.source_lines,
+      ...(item.sub_items?.flatMap((s) => s.source_lines) ?? []),
+    ]);
+  }
+  return c.rows.flatMap((r) => r.source_lines);
+}
+
+type ChunkInput = {
+  meeting_id: string;
+  project_id: string | null;
+  chunk_type: string;
+  content: string;
+  section_title: string | null;
+  speaker: string | null;
+  line_start: number | null;
+  line_end: number | null;
+  meeting_date: string | null;
+};
+
+function buildSummaryChunks(
+  summary: Summary,
+  meetingId: string,
+  projectId?: string,
+): ChunkInput[] {
+  return summary.sections.map((section) => {
+    const plainText = `${section.title}\n${renderSectionText(section)}`;
+    const lines = collectSourceLines(section);
+    return {
+      meeting_id: meetingId,
+      project_id: projectId ?? null,
+      chunk_type: "summary",
+      content: encrypt(plainText),
+      section_title: section.title,
+      speaker: null,
+      line_start: lines.length ? Math.min(...lines) : null,
+      line_end: lines.length ? Math.max(...lines) : null,
+      meeting_date: summary.meta.date ?? null,
+    };
+  });
+}
+
+const TENCENT_TURN = /^(.+?)\((\d{2}:\d{2}:\d{2})\):\s*(.+)/;
+
+type Turn = { speaker: string; text: string; lineStart: number; lineEnd: number };
+
+function mergeShortTurns(turns: Turn[], maxChars: number): Turn[] {
+  const merged: Turn[] = [];
+  for (const turn of turns) {
+    const last = merged[merged.length - 1];
+    if (last && last.speaker === turn.speaker && last.text.length + turn.text.length < maxChars) {
+      last.text += "　" + turn.text;
+      last.lineEnd = turn.lineEnd;
+    } else {
+      merged.push({ ...turn });
+    }
+  }
+  return merged;
+}
+
+type TranscriptChunkResult = {
+  chunks: ChunkInput[];
+  matchedLines: number;
+  totalLines: number;
+};
+
+function buildTranscriptChunks(
+  transcript: string,
+  meetingId: string,
+  projectId?: string,
+  meetingDate?: string,
+): TranscriptChunkResult {
+  const lines = transcript.split("\n").filter((l) => l.trim());
+  const turns: Turn[] = [];
+  let matchedLines = 0;
+
+  for (let i = 0; i < lines.length; i++) {
+    const m = lines[i].match(TENCENT_TURN);
+    if (m) {
+      matchedLines++;
+      turns.push({ speaker: m[1].trim(), text: m[3].trim(), lineStart: i + 1, lineEnd: i + 1 });
+    }
+  }
+
+  const merged = mergeShortTurns(turns, 200);
+
+  const chunks: ChunkInput[] = merged.map((turn) => ({
+    meeting_id: meetingId,
+    project_id: projectId ?? null,
+    chunk_type: "transcript",
+    content: encrypt(`${turn.speaker}：${turn.text}`),
+    section_title: null,
+    speaker: turn.speaker,
+    line_start: turn.lineStart,
+    line_end: turn.lineEnd,
+    meeting_date: meetingDate ?? null,
+  }));
+
+  return { chunks, matchedLines, totalLines: lines.length };
+}
+
+// ── Embedding ────────────────────────────────────────────────────────────────
+
+async function fetchEmbeddings(texts: string[]): Promise<number[][]> {
+  const res = await fetch(
+    "https://dashscope.aliyuncs.com/compatible-mode/v1/embeddings",
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${process.env.DASHSCOPE_API_KEY}`,
+      },
+      body: JSON.stringify({
+        model: "text-embedding-v3",
+        input: texts,
+        dimension: 1024,
+      }),
+    },
+  );
+  if (!res.ok) {
+    const err = await res.text();
+    throw new Error(`Embedding API error: ${res.status} — ${err}`);
+  }
+  const data = await res.json();
+  return (data.data as Array<{ embedding: number[] }>).map((d) => d.embedding);
+}
+
+async function embedAndStore(
+  chunks: Array<ChunkInput & { id: string }>,
+  meetingId: string,
+): Promise<void> {
+  const BATCH = 10;
+  for (let i = 0; i < chunks.length; i += BATCH) {
+    const batch = chunks.slice(i, i + BATCH);
+    const plainTexts = batch.map((c) => decrypt(c.content));
+    let vectors: number[][];
+    try {
+      vectors = await fetchEmbeddings(plainTexts);
+    } catch (e) {
+      await prisma.processingLog.create({
+        data: {
+          level: "error",
+          meeting_id: meetingId,
+          context: encryptJSON({
+            type: "embedding_batch_failed",
+            batch_start: i,
+            batch_end: i + batch.length - 1,
+            detail: String(e),
+          }),
+        },
+      });
+      continue;
+    }
+
+    for (let j = 0; j < batch.length; j++) {
+      const chunkId = batch[j].id;
+      const vec = `[${vectors[j].join(",")}]`;
+      try {
+        await prisma.$executeRaw`
+          UPDATE "Chunk" SET embedding = ${vec}::vector WHERE id = ${chunkId}
+        `;
+      } catch (e) {
+        await prisma.processingLog.create({
+          data: {
+            level: "error",
+            meeting_id: meetingId,
+            context: encryptJSON({
+              type: "embedding_write_failed",
+              chunk_id: chunkId,
+              detail: String(e),
+            }),
+          },
+        });
+      }
+    }
+  }
+}
+
+// ── Route handler ─────────────────────────────────────────────────────────────
+
 export async function POST(req: NextRequest) {
   const {
     transcript,
@@ -163,13 +380,13 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  // If project_id provided, verify project exists
   let project: { id: string; document: unknown } | null = null;
   if (project_id) {
-    project = await prisma.project.findUnique({ where: { id: project_id } });
-    if (!project) {
+    const raw = await prisma.project.findUnique({ where: { id: project_id } });
+    if (!raw) {
       return NextResponse.json({ error: "Project not found" }, { status: 404 });
     }
+    project = { id: raw.id, document: raw.document ? decryptJSON(raw.document) : {} };
   }
 
   const numbered = addLineNumbers(transcript);
@@ -184,7 +401,7 @@ export async function POST(req: NextRequest) {
     .filter(Boolean)
     .join("\n");
 
-  // Step 1: Generate meeting summary
+  // Step 1: Generate summary
   let summaryContent: string;
   try {
     summaryContent = await callDashScope(systemPrompt, contextLines);
@@ -202,17 +419,19 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  // Save meeting to DB
+  // Save meeting (transcript and summary encrypted at rest)
   const today = new Date().toISOString().slice(0, 10);
   const meeting = await prisma.meeting.create({
     data: {
-      transcript,
-      summary: summary as object,
+      transcript: encrypt(transcript),
+      summary: encryptJSON(summary),
       project_id: project_id ?? null,
     },
   });
 
-  // Step 2 (serial): If project_id, generate document diff with Prompt B
+  // Step 2 (serial): Prompt B diff if project
+  let document_diff: unknown = null;
+  let document_diff_error: string | undefined;
   if (project) {
     const userMessage = `当前日期：${today}
 
@@ -227,35 +446,81 @@ ${JSON.stringify(summary, null, 2)}
     let diffContent: string;
     try {
       diffContent = await callDashScope(MEMORY_DIFF_PROMPT, userMessage);
+      try {
+        document_diff = extractJSON(diffContent);
+      } catch {
+        document_diff = null;
+      }
     } catch (e) {
-      // Don't fail the whole request if diff generation fails
-      return NextResponse.json({
-        numbered_transcript: numbered,
-        summary,
+      document_diff_error = String(e);
+    }
+  }
+
+  // Step 3: Build and store chunks
+  const typedSummary = summary as Summary;
+  const summaryChunkInputs = buildSummaryChunks(typedSummary, meeting.id, project_id);
+
+  const { chunks: transcriptChunkInputs, matchedLines, totalLines } =
+    buildTranscriptChunks(transcript, meeting.id, project_id, typedSummary.meta.date ?? undefined);
+
+  const formatOk = totalLines === 0 || matchedLines / totalLines >= 0.3;
+
+  let chunks_warning: { matched_lines: number; total_lines: number } | undefined;
+
+  if (!formatOk) {
+    chunks_warning = { matched_lines: matchedLines, total_lines: totalLines };
+    await prisma.processingLog.create({
+      data: {
+        level: "warn",
         meeting_id: meeting.id,
-        document_diff: null,
-        document_diff_error: String(e),
-      });
-    }
-
-    let document_diff: unknown;
-    try {
-      document_diff = extractJSON(diffContent);
-    } catch {
-      document_diff = null;
-    }
-
-    return NextResponse.json({
-      numbered_transcript: numbered,
-      summary,
-      meeting_id: meeting.id,
-      document_diff,
+        context: encryptJSON({
+          type: "transcript_format_mismatch",
+          matched_lines: matchedLines,
+          total_lines: totalLines,
+        }),
+      },
     });
   }
+
+  const chunksToInsert = formatOk
+    ? [...summaryChunkInputs, ...transcriptChunkInputs]
+    : summaryChunkInputs;
+
+  const createdChunks = await Promise.all(
+    chunksToInsert.map((c) =>
+      prisma.chunk.create({
+        data: {
+          meeting_id: c.meeting_id,
+          project_id: c.project_id,
+          chunk_type: c.chunk_type,
+          content: c.content,
+          section_title: c.section_title,
+          speaker: c.speaker,
+          line_start: c.line_start,
+          line_end: c.line_end,
+          meeting_date: c.meeting_date,
+        },
+      }),
+    ),
+  );
+
+  // Step 4: Embed and store vectors (non-blocking on failure)
+  const chunksWithIds = createdChunks.map((c, i) => ({
+    ...chunksToInsert[i],
+    id: c.id,
+  }));
+  await embedAndStore(chunksWithIds, meeting.id);
+
+  const summaryCount = summaryChunkInputs.length;
+  const transcriptCount = formatOk ? transcriptChunkInputs.length : 0;
 
   return NextResponse.json({
     numbered_transcript: numbered,
     summary,
     meeting_id: meeting.id,
+    document_diff,
+    ...(document_diff_error ? { document_diff_error } : {}),
+    chunks_indexed: { summary: summaryCount, transcript: transcriptCount },
+    ...(chunks_warning ? { chunks_warning } : {}),
   });
 }

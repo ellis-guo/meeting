@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { encryptJSON } from "@/lib/crypto";
 
 const MEMORY_INIT_PROMPT = `你是一位专业的项目文档助手。根据用户提供的项目参考文件，提取关键信息，生成结构化的项目主文档。
 
@@ -69,7 +70,11 @@ export async function POST(req: NextRequest) {
   }
 
   const project = await prisma.project.create({
-    data: { name: name.trim(), reference_files, document: {} },
+    data: {
+      name: name.trim(),
+      reference_files: encryptJSON(reference_files),
+      document: encryptJSON({}),
+    },
   });
 
   if (reference_files.length === 0) {

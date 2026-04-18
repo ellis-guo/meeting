@@ -14,8 +14,8 @@ model Project {
   id              String    @id @default(uuid())
   name            String
   created_at      DateTime  @default(now())
-  reference_files Json      @default("[]")
-  document        Json      @default("{}")
+  reference_files String    @default("")
+  document        String    @default("")
   meetings        Meeting[]
 }
 
@@ -24,18 +24,30 @@ model Meeting {
   project_id String?
   created_at DateTime @default(now())
   transcript String
-  summary    Json
+  summary    String
   project    Project? @relation(fields: [project_id], references: [id])
   chunks     Chunk[]
 }
 
 model Chunk {
-  id            String                      @id @default(uuid())
+  id            String                       @id @default(uuid())
   meeting_id    String
   project_id    String?
+  chunk_type    String
   content       String
   section_title String?
+  speaker       String?
+  line_start    Int?
+  line_end      Int?
   meeting_date  String?
-  embedding     Unsupported("vector(1536)")?
-  meeting       Meeting                     @relation(fields: [meeting_id], references: [id])
+  embedding     Unsupported("vector(1024)")?
+  meeting       Meeting                      @relation(fields: [meeting_id], references: [id])
+}
+
+model ProcessingLog {
+  id         String   @id @default(uuid())
+  created_at DateTime @default(now())
+  level      String
+  meeting_id String?
+  context    String
 }

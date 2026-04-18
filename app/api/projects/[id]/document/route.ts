@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { encryptJSON, decryptJSON } from "@/lib/crypto";
 
 // PATCH /api/projects/:id/document — 更新项目主文档
 export async function PATCH(
@@ -19,7 +20,7 @@ export async function PATCH(
   }
 
   // key_decisions 只增不删校验
-  const oldDoc = project.document as Record<string, unknown>;
+  const oldDoc = (project.document ? decryptJSON<Record<string, unknown>>(project.document) : {}) as Record<string, unknown>;
   const oldDecisions = Array.isArray(oldDoc?.key_decisions) ? oldDoc.key_decisions : [];
   const newDecisions = Array.isArray(newDoc?.key_decisions) ? newDoc.key_decisions : [];
 
@@ -42,10 +43,10 @@ export async function PATCH(
     }
   }
 
-  const updated = await prisma.project.update({
+  await prisma.project.update({
     where: { id },
-    data: { document: newDoc },
+    data: { document: encryptJSON(newDoc) },
   });
 
-  return NextResponse.json(updated);
+  return NextResponse.json({ id, document: newDoc });
 }

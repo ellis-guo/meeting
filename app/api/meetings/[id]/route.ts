@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { decrypt, encryptJSON, decryptJSON } from "@/lib/crypto";
 
 export async function GET(
   _req: NextRequest,
@@ -16,7 +17,11 @@ export async function GET(
     return NextResponse.json({ error: "Meeting not found" }, { status: 404 });
   }
 
-  return NextResponse.json(meeting);
+  return NextResponse.json({
+    ...meeting,
+    transcript: decrypt(meeting.transcript),
+    summary: decryptJSON(meeting.summary),
+  });
 }
 
 // PATCH /api/meetings/:id — 更新摘要
@@ -36,12 +41,12 @@ export async function PATCH(
     return NextResponse.json({ error: "Meeting not found" }, { status: 404 });
   }
 
-  const updated = await prisma.meeting.update({
+  await prisma.meeting.update({
     where: { id },
-    data: { summary: summary as object },
+    data: { summary: encryptJSON(summary) },
   });
 
-  return NextResponse.json(updated);
+  return NextResponse.json({ id, summary });
 }
 
 // DELETE /api/meetings/:id — 删除会议

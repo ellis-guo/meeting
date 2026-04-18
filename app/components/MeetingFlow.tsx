@@ -7,6 +7,7 @@ import DiffPanel from "./DiffPanel";
 import { Summary, DocumentDiff, ProjectMemory } from "../types";
 
 type PopupState = { sourceLines: number[]; x: number; y: number } | null;
+type ChunksWarning = { matched_lines: number; total_lines: number };
 
 interface Props {
   projectId?: string;
@@ -24,6 +25,9 @@ export default function MeetingFlow({ projectId, projectDocument, onDiffConfirme
   const [isEditing, setIsEditing] = useState(false);
   const [popup, setPopup] = useState<PopupState>(null);
   const [highlightedLines, setHighlightedLines] = useState<number[]>([]);
+  const [chunksWarning, setChunksWarning] = useState<ChunksWarning | null>(null);
+  const [meetingId, setMeetingId] = useState<string | null>(null);
+  const [rechunking, setRechunking] = useState(false);
 
   const handleGenerate = async () => {
     if (!transcriptInput.trim()) return;
@@ -43,6 +47,8 @@ export default function MeetingFlow({ projectId, projectDocument, onDiffConfirme
       setNumberedTranscript(data.numbered_transcript);
       setSummary(data.summary);
       setDocumentDiff(data.document_diff ?? null);
+      setMeetingId(data.meeting_id ?? null);
+      setChunksWarning(data.chunks_warning ?? null);
       setPopup(null);
       setHighlightedLines([]);
     } finally {
@@ -64,6 +70,19 @@ export default function MeetingFlow({ projectId, projectDocument, onDiffConfirme
     setSummary(null);
     setNumberedTranscript(null);
     setDocumentDiff(null);
+    setMeetingId(null);
+    setChunksWarning(null);
+  };
+
+  const handleRechunk = async () => {
+    if (!meetingId) return;
+    setRechunking(true);
+    try {
+      await fetch(`/api/meetings/${meetingId}/rechunk`, { method: "POST" });
+    } finally {
+      setRechunking(false);
+      setChunksWarning(null);
+    }
   };
 
   // ── Step 1: Input ──
@@ -174,6 +193,33 @@ export default function MeetingFlow({ projectId, projectDocument, onDiffConfirme
           )}
         </div>
       </div>
+
+      {/* Chunks warning dialog */}
+      {chunksWarning && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 print:hidden">
+          <div className="bg-white dark:bg-zinc-900 rounded-xl shadow-xl p-6 max-w-sm w-full mx-4">
+            <h2 className="text-sm font-semibold text-gray-900 dark:text-gray-100 mb-2">逐字稿格式识别异常</h2>
+            <p className="text-sm text-gray-600 dark:text-gray-400 mb-5">
+              仅识别到 {chunksWarning.matched_lines} / {chunksWarning.total_lines} 行，格式可能不是腾讯会议标准格式。是否使用备用方式切割逐字稿索引？
+            </p>
+            <div className="flex gap-3 justify-end">
+              <button
+                onClick={() => setChunksWarning(null)}
+                className="px-4 py-2 text-sm text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 transition-colors"
+              >
+                跳过，不建索引
+              </button>
+              <button
+                onClick={handleRechunk}
+                disabled={rechunking}
+                className="px-4 py-2 text-sm font-medium bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              >
+                {rechunking ? "切割中..." : "使用备用切割"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Source popup */}
       {popup && !isEditing && (

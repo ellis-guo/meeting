@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { decryptJSON } from "@/lib/crypto";
 
 function extractJSON(text: string): unknown {
   const start = text.indexOf("{");
@@ -39,8 +40,8 @@ export async function POST(
     return NextResponse.json({ error: "Project not found" }, { status: 404 });
   }
 
-  const referenceFiles = Array.isArray(project.reference_files)
-    ? (project.reference_files as string[])
+  const referenceFiles = project.reference_files
+    ? decryptJSON<string[]>(project.reference_files)
     : [];
 
   if (referenceFiles.length === 0) {
