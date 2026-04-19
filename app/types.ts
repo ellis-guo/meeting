@@ -36,14 +36,21 @@ export type Summary = {
 
 export type ProjectMemory = {
   overview: string | null;
-  current_progress: string | null;
-  key_decisions: Array<{ date: string; decision: string }>;
-  open_issues: string[];
+  goals: string[];
+  members: Array<{ name: string; role: string }>;
+  milestones: Array<{ date: string | null; title: string; status: "done" | "pending" }>;
+  current_progress: { summary: string; as_of: string } | null;
+  key_decisions: Array<{ date: string; decision: string; rationale: string | null }>;
+  open_issues: Array<{ issue: string; owner: string | null }>;
+  risks: Array<{ risk: string; mitigation: string | null }>;
+  glossary: Array<{ term: string; definition: string }>;
+  checklist: Array<{ item: string; status: "done" | "pending" }>;
   next_meeting_goals: string | null;
+  [key: string]: unknown;
 };
 
 export type DiffUpdate = {
-  field: "current_progress" | "key_decisions" | "open_issues" | "next_meeting_goals" | "overview";
+  field: "overview" | "goals" | "members" | "milestones" | "current_progress" | "key_decisions" | "open_issues" | "risks" | "glossary" | "checklist" | "next_meeting_goals";
   old: unknown;
   new: unknown;
   reason: string;

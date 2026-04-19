@@ -138,25 +138,45 @@ function ContentRenderer({
           <li key={itemIdx}>
             <div className="flex gap-2.5 text-base font-medium leading-relaxed text-gray-800 dark:text-gray-200">
               <span className="text-gray-400 dark:text-gray-500 mt-0.5 shrink-0 tabular-nums">{itemIdx + 1}.</span>
-              <TraceableText
-                text={item.text}
-                sourceLines={item.source_lines}
-                isEditing={isEditing}
-                onChange={(val) =>
-                  onSummaryChange(
-                    updateSection(summary, secIdx, (s) => ({
-                      ...s,
-                      content: {
-                        ...(s.content as BulletsContent),
-                        items: (s.content as BulletsContent).items.map((it, j) =>
-                          j === itemIdx ? { ...it, text: val } : it
-                        ),
-                      },
-                    }))
-                  )
-                }
-                onSourceClick={onSourceClick}
-              />
+              {item.sub_items && item.sub_items.length > 0 ? (
+                <EditableSpan
+                  value={item.text}
+                  isEditing={isEditing}
+                  onChange={(val) =>
+                    onSummaryChange(
+                      updateSection(summary, secIdx, (s) => ({
+                        ...s,
+                        content: {
+                          ...(s.content as BulletsContent),
+                          items: (s.content as BulletsContent).items.map((it, j) =>
+                            j === itemIdx ? { ...it, text: val } : it
+                          ),
+                        },
+                      }))
+                    )
+                  }
+                />
+              ) : (
+                <TraceableText
+                  text={item.text}
+                  sourceLines={item.source_lines}
+                  isEditing={isEditing}
+                  onChange={(val) =>
+                    onSummaryChange(
+                      updateSection(summary, secIdx, (s) => ({
+                        ...s,
+                        content: {
+                          ...(s.content as BulletsContent),
+                          items: (s.content as BulletsContent).items.map((it, j) =>
+                            j === itemIdx ? { ...it, text: val } : it
+                          ),
+                        },
+                      }))
+                    )
+                  }
+                  onSourceClick={onSourceClick}
+                />
+              )}
             </div>
             {item.sub_items && item.sub_items.length > 0 && (
               <ul className="pl-5 mt-1.5 space-y-1.5">

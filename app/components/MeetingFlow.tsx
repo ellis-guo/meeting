@@ -25,6 +25,7 @@ export default function MeetingFlow({ projectId, projectDocument, onDiffConfirme
 
   // Input form state
   const [transcriptInput, setTranscriptInput] = useState("");
+  const [dateInput, setDateInput] = useState(() => new Date().toISOString().slice(0, 10));
   const [template, setTemplate] = useState<"smart" | "project">("smart");
   const [generateError, setGenerateError] = useState<string | null>(null);
 
@@ -85,6 +86,7 @@ export default function MeetingFlow({ projectId, projectDocument, onDiffConfirme
         body: JSON.stringify({
           transcript: transcriptInput,
           template,
+          date: dateInput,
           ...(projectId ? { project_id: projectId } : {}),
         }),
       });
@@ -185,10 +187,20 @@ export default function MeetingFlow({ projectId, projectDocument, onDiffConfirme
               </button>
             ))}
           </div>
+          <div className="flex items-center gap-3">
+            <label className="text-sm text-gray-500 dark:text-gray-400 shrink-0">会议日期</label>
+            <input
+              type="date"
+              value={dateInput}
+              onChange={(e) => setDateInput(e.target.value)}
+              required
+              className="flex-1 px-3 py-2 border border-gray-200 dark:border-zinc-700 rounded-lg text-sm text-gray-800 dark:text-gray-200 bg-white dark:bg-zinc-900 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+          </div>
           {generateError && <p className="text-sm text-red-500 dark:text-red-400">{generateError}</p>}
           <button
             onClick={handleGenerate}
-            disabled={!transcriptInput.trim()}
+            disabled={!transcriptInput.trim() || !dateInput}
             className="w-full py-3 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
           >
             生成总结

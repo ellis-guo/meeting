@@ -13,15 +13,45 @@ interface Props {
   onConfirmed: () => void;
 }
 
-const FIELD_LABELS: Record<DiffUpdate["field"], string> = {
+const FIELD_LABELS: Record<string, string> = {
   overview: "项目概述",
+  goals: "核心目标",
+  members: "成员",
+  milestones: "里程碑",
   current_progress: "当前进度",
   key_decisions: "关键决策",
   open_issues: "待解决问题",
+  risks: "风险",
+  glossary: "术语表",
+  checklist: "需求清单",
   next_meeting_goals: "下次会议目标",
 };
 
+function renderItem(item: unknown): string {
+  if (typeof item === "string") return item;
+  if (typeof item !== "object" || item === null) return String(item);
+  const o = item as Record<string, unknown>;
+  if ("decision" in o) return `[${o.date}] ${o.decision}${o.rationale ? ` — ${o.rationale}` : ""}`;
+  if ("issue" in o) return `${o.issue}${o.owner ? ` (${o.owner})` : ""}`;
+  if ("risk" in o) return `${o.risk}${o.mitigation ? ` → ${o.mitigation}` : ""}`;
+  if ("item" in o && "status" in o) return `${o.status === "done" ? "✓" : "○"} ${o.item}`;
+  if ("title" in o && "status" in o) return `[${o.status}] ${o.date ? `${o.date} ` : ""}${o.title}`;
+  if ("name" in o && "role" in o) return `${o.name} — ${o.role}`;
+  if ("term" in o) return `${o.term}: ${o.definition}`;
+  return JSON.stringify(item);
+}
+
 function ValuePreview({ value }: { value: unknown }) {
+  if (value === null || value === undefined || value === "")
+    return <span className="text-gray-400 italic">（空）</span>;
+
+  if (typeof value === "object" && !Array.isArray(value)) {
+    const o = value as Record<string, unknown>;
+    if ("summary" in o)
+      return <span>{o.summary as string} <span className="text-gray-400 dark:text-gray-500">截至 {o.as_of as string}</span></span>;
+    return <span>{JSON.stringify(value)}</span>;
+  }
+
   if (Array.isArray(value)) {
     if (value.length === 0) return <span className="text-gray-400 italic">（空）</span>;
     return (
@@ -29,17 +59,13 @@ function ValuePreview({ value }: { value: unknown }) {
         {(value as Array<unknown>).map((item, i) => (
           <li key={i} className="flex gap-1.5">
             <span className="text-gray-400 shrink-0">•</span>
-            <span>
-              {typeof item === "object" && item !== null && "decision" in item
-                ? `[${(item as { date: string; decision: string }).date}] ${(item as { date: string; decision: string }).decision}`
-                : String(item)}
-            </span>
+            <span>{renderItem(item)}</span>
           </li>
         ))}
       </ul>
     );
   }
-  if (!value) return <span className="text-gray-400 italic">（空）</span>;
+
   return <span>{String(value)}</span>;
 }
 

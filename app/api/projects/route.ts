@@ -4,22 +4,34 @@ import { prisma } from "@/lib/prisma";
 import { encryptJSON } from "@/lib/crypto";
 import { getDashScopeKey } from "@/lib/apiKey.server";
 
-const MEMORY_INIT_PROMPT = `你是一位专业的项目文档助手。根据用户提供的项目参考文件，提取关键信息，生成结构化的项目主文档。
+const MEMORY_INIT_PROMPT = `你是一位专业的项目文档助手。根据用户提供的参考文件（可能是课程要求、PRD、技术文档等），主动提取和归纳关键信息，生成结构化的项目主文档初稿。
 
-规则：
+<rules>
 1. 仅输出合法的 JSON，不得包含 Markdown、代码块或任何解释性文字。
-2. 仅记录参考文件中明确陈述的内容，不推断或补充。
-3. 若某字段在参考文件中无对应信息，填入 null。
-4. 使用正式书面语，与参考文件的主导语言保持一致。
+2. 必须输出 schema 中所有字段；确实没有信息的字段填 null 或 []，不得省略任何字段。
+3. 主动归纳：参考文件中有对应信息就提取，确实没有才填 null 或 []。不要因为"没有明确说这是决策"就留空——项目已确定的技术选型、工具、规范都属于 key_decisions。
+4. key_decisions：包含参考文件中已明确的技术选型、约束和规范；date 字段使用 context 中提供的今日日期。
+5. open_issues：将参考文件中的主要待实现内容、未确定事项提取为初始 open_issues。
+6. current_progress：新项目无历史进展，设为 null。
+7. members：若参考文件未提及成员，填 []。
+8. checklist：将参考文件中所有具体、可单独验证的要求逐条提取，粒度要细。每条必须独立可验证——不能是"实现安全层"这种宽泛表述，要细化到"数据包用 AES-GCM 加密"、"每包 nonce 唯一"、"Test 3 篡改检测截图"这个级别。宁可多条也不合并。
+9. 语言与参考文件主导语言保持一致。
+</rules>
 
-输出 Schema：
+<schema>
 {
-  "overview": "string or null",
-  "current_progress": "string or null",
-  "key_decisions": [],
-  "open_issues": [],
-  "next_meeting_goals": "string or null"
-}`;
+  "overview": "string or null — 项目背景与目标，2-3句话",
+  "goals": ["string — 可验收的核心交付目标"],
+  "members": [{ "name": "string", "role": "string" }],
+  "milestones": [{ "date": "YYYY-MM-DD or null", "title": "string", "status": "done | pending" }],
+  "current_progress": { "summary": "string", "as_of": "YYYY-MM-DD" } or null,
+  "key_decisions": [{ "date": "YYYY-MM-DD", "decision": "string", "rationale": "string or null" }],
+  "open_issues": [{ "issue": "string", "owner": "string or null" }],
+  "risks": [{ "risk": "string", "mitigation": "string or null" }],
+  "glossary": [{ "term": "string", "definition": "string" }],
+  "checklist": [{ "item": "string — 具体可验证的单条要求，保留关键细节", "status": "done | pending" }]
+}
+</schema>`;
 
 function extractJSON(text: string): unknown {
   const start = text.indexOf("{");
@@ -45,7 +57,7 @@ async function generateDocumentFromFiles(referenceFiles: string[], apiKey: strin
         model: "qwen3.6-plus",
         messages: [
           { role: "system", content: MEMORY_INIT_PROMPT },
-          { role: "user", content: `项目参考文件：\n\n${fileContent}` },
+          { role: "user", content: `今日日期：${new Date().toISOString().slice(0, 10)}\n\n项目参考文件：\n\n${fileContent}` },
         ],
         enable_thinking: false,
       }),
