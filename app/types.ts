@@ -40,7 +40,7 @@ export type ProjectMemory = {
   members: Array<{ name: string; role: string }>;
   milestones: Array<{ date: string | null; title: string; status: "done" | "pending" }>;
   current_progress: { summary: string; as_of: string } | null;
-  key_decisions: Array<{ date: string; decision: string; rationale: string | null }>;
+  key_decisions: Array<{ date: string | null; decision: string; rationale: string | null }>;
   open_issues: Array<{ issue: string; owner: string | null }>;
   risks: Array<{ risk: string; mitigation: string | null }>;
   glossary: Array<{ term: string; definition: string }>;

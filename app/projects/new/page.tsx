@@ -55,7 +55,7 @@ export default function NewProjectPage() {
       const cleanedDraft = {
         ...draft,
         key_decisions: (draft.key_decisions ?? []).filter(
-          (d) => d && typeof d.date === "string" && dateRegex.test(d.date),
+          (d) => d && (d.date === null || (typeof d.date === "string" && dateRegex.test(d.date))),
         ),
       };
 

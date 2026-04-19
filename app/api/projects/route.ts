@@ -10,7 +10,7 @@ const MEMORY_INIT_PROMPT = `你是一位专业的项目文档助手。根据用�
 1. 仅输出合法的 JSON，不得包含 Markdown、代码块或任何解释性文字。
 2. 必须输出 schema 中所有字段；确实没有信息的字段填 null 或 []，不得省略任何字段。
 3. 主动归纳：参考文件中有对应信息就提取，确实没有才填 null 或 []。不要因为"没有明确说这是决策"就留空——项目已确定的技术选型、工具、规范都属于 key_decisions。
-4. key_decisions：包含参考文件中已明确的技术选型、约束和规范；date 字段使用 context 中提供的今日日期。
+4. key_decisions：包含参考文件中已明确的技术选型、约束和规范；date 字段：若参考文件明确标注了决策时间则填写（YYYY-MM-DD），否则填 null——不要伪造日期。
 5. open_issues：将参考文件中的主要待实现内容、未确定事项提取为初始 open_issues。
 6. current_progress：新项目无历史进展，设为 null。
 7. members：若参考文件未提及成员，填 []。
@@ -25,7 +25,7 @@ const MEMORY_INIT_PROMPT = `你是一位专业的项目文档助手。根据用�
   "members": [{ "name": "string", "role": "string" }],
   "milestones": [{ "date": "YYYY-MM-DD or null", "title": "string", "status": "done | pending" }],
   "current_progress": { "summary": "string", "as_of": "YYYY-MM-DD" } or null,
-  "key_decisions": [{ "date": "YYYY-MM-DD", "decision": "string", "rationale": "string or null" }],
+  "key_decisions": [{ "date": "YYYY-MM-DD or null", "decision": "string", "rationale": "string or null" }],
   "open_issues": [{ "issue": "string", "owner": "string or null" }],
   "risks": [{ "risk": "string", "mitigation": "string or null" }],
   "glossary": [{ "term": "string", "definition": "string" }],
@@ -57,7 +57,7 @@ async function generateDocumentFromFiles(referenceFiles: string[], apiKey: strin
         model: "qwen3.6-plus",
         messages: [
           { role: "system", content: MEMORY_INIT_PROMPT },
-          { role: "user", content: `今日日期：${new Date().toISOString().slice(0, 10)}\n\n项目参考文件：\n\n${fileContent}` },
+          { role: "user", content: `项目参考文件：\n\n${fileContent}` },
         ],
         enable_thinking: false,
       }),

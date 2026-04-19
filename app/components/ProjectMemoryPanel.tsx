@@ -30,24 +30,18 @@ const FIELD_ORDER = [
   "key_decisions", "open_issues", "risks", "glossary", "checklist", "next_meeting_goals",
 ];
 
-function renderItem(item: unknown): string {
-  if (typeof item === "string") return item;
-  if (typeof item !== "object" || item === null) return String(item);
+function renderItem(item: unknown): { icon: string | null; text: string } {
+  if (typeof item === "string") return { icon: null, text: item };
+  if (typeof item !== "object" || item === null) return { icon: null, text: String(item) };
   const o = item as Record<string, unknown>;
-  if ("decision" in o) return `[${o.date}] ${o.decision}${o.rationale ? ` — ${o.rationale}` : ""}`;
-  if ("issue" in o) return `${o.issue}${o.owner ? ` (${o.owner})` : ""}`;
-  if ("risk" in o) return `${o.risk}${o.mitigation ? ` → ${o.mitigation}` : ""}`;
-  if ("name" in o && "role" in o) return `${o.name} — ${o.role}`;
-  if ("term" in o) return `${o.term}: ${o.definition}`;
-  if ("item" in o && "status" in o) {
-    const icon = o.status === "done" ? "✓" : "○";
-    return `${icon} ${o.item}`;
-  }
-  if ("title" in o && "status" in o) {
-    const icon = o.status === "done" ? "✓" : "○";
-    return `${icon} ${o.date ? `${o.date}  ` : ""}${o.title}`;
-  }
-  return JSON.stringify(item);
+  if ("decision" in o) return { icon: null, text: `${o.date ? `[${o.date}] ` : ""}${o.decision}${o.rationale ? ` — ${o.rationale}` : ""}` };
+  if ("issue" in o) return { icon: null, text: `${o.issue}${o.owner ? ` (${o.owner})` : ""}` };
+  if ("risk" in o) return { icon: null, text: `${o.risk}${o.mitigation ? ` → ${o.mitigation}` : ""}` };
+  if ("name" in o && "role" in o) return { icon: null, text: `${o.name} — ${o.role}` };
+  if ("term" in o) return { icon: null, text: `${o.term}: ${o.definition}` };
+  if ("item" in o && "status" in o) return { icon: o.status === "done" ? "✓" : "○", text: String(o.item) };
+  if ("title" in o && "status" in o) return { icon: o.status === "done" ? "✓" : "○", text: `${o.date ? `${o.date}  ` : ""}${o.title}` };
+  return { icon: null, text: JSON.stringify(item) };
 }
 
 function FieldValue({ fieldKey, value }: { fieldKey: string; value: unknown }) {
@@ -72,12 +66,15 @@ function FieldValue({ fieldKey, value }: { fieldKey: string; value: unknown }) {
       return <span className="text-gray-400 dark:text-gray-500 italic text-sm">（空）</span>;
     return (
       <ul className="space-y-1">
-        {value.map((item, i) => (
-          <li key={i} className="flex gap-2 text-sm text-gray-700 dark:text-gray-300">
-            <span className="text-gray-400 dark:text-gray-500 shrink-0">•</span>
-            <span>{renderItem(item)}</span>
-          </li>
-        ))}
+        {value.map((item, i) => {
+          const rendered = renderItem(item);
+          return (
+            <li key={i} className="flex gap-2 text-sm text-gray-700 dark:text-gray-300">
+              <span className="text-gray-400 dark:text-gray-500 shrink-0">{rendered.icon ?? "•"}</span>
+              <span>{rendered.text}</span>
+            </li>
+          );
+        })}
       </ul>
     );
   }

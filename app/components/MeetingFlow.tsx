@@ -25,7 +25,7 @@ export default function MeetingFlow({ projectId, projectDocument, onDiffConfirme
 
   // Input form state
   const [transcriptInput, setTranscriptInput] = useState("");
-  const [dateInput, setDateInput] = useState(() => new Date().toISOString().slice(0, 10));
+  const [dateInput, setDateInput] = useState("");
   const [template, setTemplate] = useState<"smart" | "project">("smart");
   const [generateError, setGenerateError] = useState<string | null>(null);
 
