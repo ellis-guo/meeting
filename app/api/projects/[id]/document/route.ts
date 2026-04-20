@@ -26,17 +26,10 @@ export async function PATCH(
   const oldDecisions = Array.isArray(oldDoc?.key_decisions) ? oldDoc.key_decisions : [];
   const newDecisions = Array.isArray(newDoc?.key_decisions) ? newDoc.key_decisions : [];
 
-  if (newDecisions.length < oldDecisions.length) {
-    return NextResponse.json(
-      { error: "key_decisions can only grow — cannot remove existing entries" },
-      { status: 400 },
-    );
-  }
-
   const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
   for (const decision of newDecisions.slice(oldDecisions.length)) {
     const d = (decision as Record<string, unknown>).date;
-    if (typeof d !== "string" || !dateRegex.test(d)) {
+    if (d !== null && (typeof d !== "string" || !dateRegex.test(d))) {
       return NextResponse.json(
         { error: `key_decisions entry date must be YYYY-MM-DD, got: ${d}` },
         { status: 400 },

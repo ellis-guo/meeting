@@ -49,13 +49,17 @@ function FieldValue({ fieldKey, value }: { fieldKey: string; value: unknown }) {
     return <span className="text-gray-400 dark:text-gray-500 italic text-sm">（空）</span>;
 
   if (fieldKey === "current_progress" && typeof value === "object" && !Array.isArray(value)) {
-    const p = value as { summary: string; as_of: string };
-    return (
-      <p className="text-sm text-gray-700 dark:text-gray-300">
-        {p.summary}{" "}
-        <span className="text-gray-400 dark:text-gray-500 text-xs">截至 {p.as_of}</span>
-      </p>
-    );
+    const p = value as Record<string, unknown>;
+    const summaryText = (p.summary ?? p.status ?? p.description ?? null) as string | null;
+    if (summaryText) {
+      return (
+        <p className="text-sm text-gray-700 dark:text-gray-300">
+          {summaryText}{" "}
+          {p.as_of && <span className="text-gray-400 dark:text-gray-500 text-xs">截至 {p.as_of as string}</span>}
+        </p>
+      );
+    }
+    return <p className="text-sm font-mono text-gray-500 dark:text-gray-400">{JSON.stringify(value)}</p>;
   }
 
   if (typeof value === "string")

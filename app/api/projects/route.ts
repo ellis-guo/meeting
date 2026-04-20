@@ -42,7 +42,7 @@ function extractJSON(text: string): unknown {
   return JSON.parse(text.slice(start, end + 1));
 }
 
-async function generateDocumentFromFiles(referenceFiles: string[], apiKey: string): Promise<unknown> {
+async function generateDocumentFromFiles(referenceFiles: string[], apiKey: string, langRule: string): Promise<unknown> {
   const fileContent = referenceFiles.join("\n\n---\n\n");
 
   const res = await fetch(
@@ -57,7 +57,7 @@ async function generateDocumentFromFiles(referenceFiles: string[], apiKey: strin
         model: "qwen3.6-plus",
         messages: [
           { role: "system", content: MEMORY_INIT_PROMPT },
-          { role: "user", content: `项目参考文件：\n\n${fileContent}` },
+          { role: "user", content: `${langRule}\n\n项目参考文件：\n\n${fileContent}` },
         ],
         enable_thinking: false,
       }),
@@ -75,10 +75,18 @@ async function generateDocumentFromFiles(referenceFiles: string[], apiKey: strin
   return extractJSON(content);
 }
 
+function getLangRule(req: NextRequest): string {
+  const lang = req.cookies.get("lang_pref")?.value ?? "zh";
+  return lang === "en"
+    ? "Output language: English. Retain original form for technical terms and proper nouns."
+    : "输出语言：以中文为主，学术名词、专有名词、代码标识符保留英文原文。";
+}
+
 export async function POST(req: NextRequest) {
   const { userId } = await auth();
   if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
+  const langRule = getLangRule(req);
   const { name, reference_files = [] } = await req.json();
 
   if (!name?.trim()) {
@@ -108,7 +116,7 @@ export async function POST(req: NextRequest) {
 
   let document_draft: unknown;
   try {
-    document_draft = await generateDocumentFromFiles(reference_files, apiKey);
+    document_draft = await generateDocumentFromFiles(reference_files, apiKey, langRule);
   } catch (e) {
     return NextResponse.json(
       { error: "Failed to generate document from reference files", detail: String(e) },

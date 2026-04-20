@@ -113,9 +113,8 @@ function ContentRenderer({
   if (content.type === "text") {
     return (
       <p className="pl-4 text-sm leading-relaxed text-gray-600 dark:text-gray-400">
-        <TraceableText
-          text={content.value}
-          sourceLines={content.source_lines}
+        <EditableSpan
+          value={content.value}
           isEditing={isEditing}
           onChange={(val) =>
             onSummaryChange(
@@ -125,7 +124,6 @@ function ContentRenderer({
               }))
             )
           }
-          onSourceClick={onSourceClick}
         />
       </p>
     );

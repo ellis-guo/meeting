@@ -107,6 +107,36 @@ function rrfMerge(lists: ChunkRow[][], k = 60): ChunkRow[] {
     .sort((a, b) => (scores.get(b.id) ?? 0) - (scores.get(a.id) ?? 0));
 }
 
+// Common Chinese functional words to exclude as standalone keywords
+const ZH_STOP = new Set("了的地得是在有和与或不对于关于什么哪里哪谁如何怎么为什么吗呢啊呀吧嗯".split(""));
+
+function extractKeywords(text: string): string[] {
+  // Split by punctuation/spaces into segments
+  const segments = text
+    .split(/[\s，。？！,.?!\r\n、：:；;「」【】()（）]+/)
+    .map(s => s.trim())
+    .filter(s => s.length >= 2);
+
+  // Extract contiguous non-stop CJK runs (likely proper nouns / place names)
+  const cjkRuns: string[] = [];
+  let run = "";
+  for (const ch of text) {
+    const isCJK = ch >= "\u4e00" && ch <= "\u9fff";
+    if (isCJK && !ZH_STOP.has(ch)) {
+      run += ch;
+    } else {
+      if (run.length >= 2) cjkRuns.push(run);
+      run = "";
+    }
+  }
+  if (run.length >= 2) cjkRuns.push(run);
+
+  // Also keep Latin/digit tokens (e.g. person names like "Ellis")
+  const latinRuns = Array.from(text.matchAll(/[A-Za-z0-9_\-]{2,}/g), m => m[0]);
+
+  return [...new Set([...segments, ...cjkRuns, ...latinRuns])].slice(0, 8);
+}
+
 export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> },
@@ -144,14 +174,21 @@ export async function POST(
 
   const vecStr = `[${queryVec.join(",")}]`;
 
-  // Three-way parallel retrieval
-  const [summaryHits, transcriptHits, bm25Hits] = await Promise.all([
+  // Four-way parallel retrieval
+  const keywords = extractKeywords(question);
+  // Escape regex special chars, join with | for PostgreSQL ~* (case-insensitive regex match)
+  const keywordPattern = keywords.length > 0
+    ? keywords.map(k => k.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|")
+    : null;
+
+  const [summaryHits, transcriptHits, bm25Hits, ilikeHits] = await Promise.all([
     prisma.$queryRaw<ChunkRow[]>`
       SELECT id, meeting_id, chunk_type, section_title, speaker, meeting_date, search_text
       FROM "Chunk"
       WHERE project_id = ${projectId}
         AND chunk_type = 'summary'
         AND embedding IS NOT NULL
+        AND embedding <=> ${vecStr}::vector < 0.5
       ORDER BY embedding <=> ${vecStr}::vector
       LIMIT 5
     `,
@@ -161,6 +198,7 @@ export async function POST(
       WHERE project_id = ${projectId}
         AND chunk_type = 'transcript'
         AND embedding IS NOT NULL
+        AND embedding <=> ${vecStr}::vector < 0.5
       ORDER BY embedding <=> ${vecStr}::vector
       LIMIT 10
     `,
@@ -177,9 +215,19 @@ export async function POST(
       ) DESC
       LIMIT 5
     `,
+    keywordPattern
+      ? prisma.$queryRaw<ChunkRow[]>`
+          SELECT id, meeting_id, chunk_type, section_title, speaker, meeting_date, search_text
+          FROM "Chunk"
+          WHERE project_id = ${projectId}
+            AND search_text IS NOT NULL
+            AND search_text ~* ${keywordPattern}
+          LIMIT 5
+        `
+      : Promise.resolve([] as ChunkRow[]),
   ]);
 
-  const merged = rrfMerge([summaryHits, transcriptHits, bm25Hits]).slice(0, 8);
+  const merged = rrfMerge([summaryHits, transcriptHits, bm25Hits, ilikeHits]).slice(0, 8);
 
   const projectDoc = project.document ? decryptJSON(project.document) : null;
 
@@ -218,5 +266,49 @@ export async function POST(
     meeting_date: c.meeting_date,
   }));
 
-  return NextResponse.json({ answer: parsed.answer ?? raw_answer, sources });
+  // Count all chunks for this project, split by embedding status
+  const [totalChunksRes, embeddedChunksRes] = await Promise.all([
+    prisma.$queryRaw<[{ count: bigint }]>`SELECT COUNT(*)::int AS count FROM "Chunk" WHERE project_id = ${projectId}`,
+    prisma.$queryRaw<[{ count: bigint }]>`SELECT COUNT(*)::int AS count FROM "Chunk" WHERE project_id = ${projectId} AND embedding IS NOT NULL`,
+  ]);
+  const totalChunks = Number(totalChunksRes[0]?.count ?? 0);
+  const embeddedChunks = Number(embeddedChunksRes[0]?.count ?? 0);
+
+  // Fetch recent embedding errors from ProcessingLog for meetings in this project
+  const projectMeetingIds = await prisma.meeting.findMany({
+    where: { project_id: projectId },
+    select: { id: true },
+  });
+  const meetingIds = projectMeetingIds.map((m) => m.id);
+  const embeddingLogs = meetingIds.length > 0
+    ? await prisma.processingLog.findMany({
+        where: { meeting_id: { in: meetingIds }, level: "error" },
+        orderBy: { created_at: "desc" },
+        take: 5,
+      })
+    : [];
+  const recentEmbedErrors = embeddingLogs.map((log) => {
+    try { return decryptJSON<Record<string, unknown>>(log.context); } catch { return log.context; }
+  });
+
+  const _debug = {
+    summary_hits: summaryHits.length,
+    transcript_hits: transcriptHits.length,
+    bm25_hits: bm25Hits.length,
+    ilike_hits: ilikeHits.length,
+    merged_count: merged.length,
+    has_project_doc: !!projectDoc,
+    chunks_total: totalChunks,
+    chunks_with_embedding: embeddedChunks,
+    recent_embed_errors: recentEmbedErrors,
+    all_retrieved_chunks: merged.map((c) => ({
+      type: c.chunk_type,
+      date: c.meeting_date,
+      speaker: c.speaker,
+      section: c.section_title,
+      text: (c.search_text ?? "").slice(0, 150),
+    })),
+  };
+
+  return NextResponse.json({ answer: parsed.answer ?? raw_answer, sources, _debug });
 }

@@ -5,8 +5,9 @@ import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import SummaryPanel from "@/app/components/SummaryPanel";
 import TranscriptPanel from "@/app/components/TranscriptPanel";
+import DiffPanel from "@/app/components/DiffPanel";
 import MeetingAskPanel from "@/app/components/MeetingAskPanel";
-import { Summary } from "@/app/types";
+import { Summary, DocumentDiff, ProjectMemory } from "@/app/types";
 import { addLineNumbers } from "@/lib/utils";
 
 type PopupState = { sourceLines: number[]; x: number; y: number } | null;
@@ -28,6 +29,13 @@ export default function MeetingDetailPage() {
 
   const [popup, setPopup] = useState<PopupState>(null);
   const [highlightedLines, setHighlightedLines] = useState<number[]>([]);
+
+  // Diff / 主文档更新
+  const [documentDiff, setDocumentDiff] = useState<DocumentDiff | null>(null);
+  const [projectDocument, setProjectDocument] = useState<ProjectMemory | null>(null);
+  const [generatingDiff, setGeneratingDiff] = useState(false);
+  const [diffError, setDiffError] = useState<string | null>(null);
+  const [showDiffPanel, setShowDiffPanel] = useState(false);
 
   useEffect(() => {
     fetch(`/api/meetings/${meetingId}`)
@@ -79,6 +87,25 @@ export default function MeetingDetailPage() {
     }
   };
 
+  const handleGenerateDiff = async () => {
+    setGeneratingDiff(true);
+    setDiffError(null);
+    try {
+      const res = await fetch(`/api/projects/${projectId}/meetings/${meetingId}/diff`, {
+        method: "POST",
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "生成失败");
+      setDocumentDiff(data.document_diff as DocumentDiff);
+      setProjectDocument(data.project_document as ProjectMemory);
+      setShowDiffPanel(true);
+    } catch (e) {
+      setDiffError(String(e));
+    } finally {
+      setGeneratingDiff(false);
+    }
+  };
+
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-50 dark:bg-zinc-950">
@@ -112,28 +139,47 @@ export default function MeetingDetailPage() {
           <span className="text-sm text-gray-600 dark:text-gray-400">{date}</span>
         </div>
         <div className="flex items-center gap-2">
-          <button
-            onClick={() => { setIsEditing((v) => !v); setPopup(null); }}
-            className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
-              isEditing
-                ? "bg-blue-600 text-white"
-                : "border border-gray-200 dark:border-zinc-700 text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-zinc-800"
-            }`}
-          >
-            {isEditing ? "取消" : "编辑"}
-          </button>
-          {isEditing && (
+          {!showDiffPanel && (
+            <>
+              <button
+                onClick={() => { setIsEditing((v) => !v); setPopup(null); }}
+                className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
+                  isEditing
+                    ? "bg-blue-600 text-white"
+                    : "border border-gray-200 dark:border-zinc-700 text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-zinc-800"
+                }`}
+              >
+                {isEditing ? "取消" : "编辑"}
+              </button>
+              {isEditing && (
+                <button
+                  onClick={handleSave}
+                  disabled={saving}
+                  className="px-3 py-1.5 rounded-lg text-sm font-medium bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 transition-colors"
+                >
+                  {saving ? "保存中..." : "保存"}
+                </button>
+              )}
+              <button
+                onClick={handleGenerateDiff}
+                disabled={generatingDiff}
+                className="px-3 py-1.5 rounded-lg text-sm font-medium border border-gray-200 dark:border-zinc-700 text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-zinc-800 disabled:opacity-50 transition-colors"
+              >
+                {generatingDiff ? "生成中..." : "更新主文档"}
+              </button>
+            </>
+          )}
+          {showDiffPanel && (
             <button
-              onClick={handleSave}
-              disabled={saving}
-              className="px-3 py-1.5 rounded-lg text-sm font-medium bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 transition-colors"
+              onClick={() => setShowDiffPanel(false)}
+              className="px-3 py-1.5 rounded-lg text-sm font-medium border border-gray-200 dark:border-zinc-700 text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-zinc-800 transition-colors"
             >
-              {saving ? "保存中..." : "保存"}
+              ← 返回摘要
             </button>
           )}
           <button
             onClick={() => window.print()}
-            className="px-3 py-1.5 rounded-lg text-sm font-medium border border-gray-200 dark:border-zinc-700 text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-zinc-800 transition-colors"
+            className="px-3 py-1.5 rounded-lg text-sm font-medium border border-gray-200 dark:border-zinc-700 text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-zinc-800 transition-colors print:hidden"
           >
             PDF
           </button>
@@ -147,8 +193,15 @@ export default function MeetingDetailPage() {
         </div>
       </header>
 
+      {diffError && (
+        <div className="px-6 py-2 bg-red-50 dark:bg-red-950/30 border-b border-red-100 dark:border-red-900 shrink-0">
+          <p className="text-xs text-red-500">{diffError}</p>
+        </div>
+      )}
+
       <div className="flex flex-1 overflow-hidden min-h-0">
-        <div className="w-1/2 print:w-full overflow-y-auto border-r border-gray-200 dark:border-zinc-800 print:border-none p-6 print:p-8">
+        {/* Left: summary (hidden when diff panel is fullscreen on mobile, always visible on desktop) */}
+        <div className={`${showDiffPanel ? "hidden md:block" : ""} w-1/2 print:w-full overflow-y-auto border-r border-gray-200 dark:border-zinc-800 print:border-none p-6 print:p-8`}>
           <SummaryPanel
             summary={summary}
             isEditing={isEditing}
@@ -156,15 +209,30 @@ export default function MeetingDetailPage() {
             onSummaryChange={setSummary}
           />
         </div>
-        <div className="w-1/2 print:hidden overflow-y-auto p-6 bg-gray-50 dark:bg-zinc-900">
-          <TranscriptPanel
-            numberedTranscript={numberedTranscript}
-            highlightedLines={highlightedLines}
-          />
+
+        {/* Right: TranscriptPanel or DiffPanel */}
+        <div className={`${showDiffPanel ? "w-full md:w-1/2" : "w-1/2"} print:hidden overflow-hidden flex flex-col`}>
+          {showDiffPanel && documentDiff && projectDocument ? (
+            <DiffPanel
+              diff={documentDiff}
+              numberedTranscript={numberedTranscript}
+              highlightedLines={highlightedLines}
+              projectId={projectId}
+              projectDocument={projectDocument}
+              onConfirmed={() => setShowDiffPanel(false)}
+            />
+          ) : (
+            <div className="flex-1 overflow-y-auto p-6 bg-gray-50 dark:bg-zinc-900">
+              <TranscriptPanel
+                numberedTranscript={numberedTranscript}
+                highlightedLines={highlightedLines}
+              />
+            </div>
+          )}
         </div>
       </div>
 
-      <MeetingAskPanel meetingId={meetingId} />
+      {!showDiffPanel && <MeetingAskPanel meetingId={meetingId} />}
 
       {popup && !isEditing && (
         <div

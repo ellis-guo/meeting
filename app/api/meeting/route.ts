@@ -130,7 +130,7 @@ const MEMORY_DIFF_PROMPT = `你是一位专业的项目文档维护助手。根�
     {
       "field": "overview | goals | members | milestones | current_progress | key_decisions | open_issues | risks | glossary | checklist | next_meeting_goals",
       "old": <原值>,
-      "new": <新值>,
+      "new": <新值，current_progress 必须严格为 {"summary":"string","as_of":"YYYY-MM-DD"} 格式，不得添加其他字段>,
       "reason": "string"
     }
   ]
@@ -395,6 +395,11 @@ export async function POST(req: NextRequest) {
   const apiKey = (await getDashScopeKey()) ?? process.env.DASHSCOPE_API_KEY ?? "";
   if (!apiKey) return NextResponse.json({ error: "API key required. Please configure your DashScope API key in Settings." }, { status: 401 });
 
+  const lang = req.cookies.get("lang_pref")?.value ?? "zh";
+  const langRule = lang === "en"
+    ? "Output language: English. Retain original form for technical terms and proper nouns."
+    : "输出语言：以中文为主，学术名词、专有名词、代码标识符保留英文原文。";
+
   const { transcript, template = "smart", date, time, project_id } = await req.json();
   if (!transcript?.trim()) return NextResponse.json({ error: "transcript is required" }, { status: 400 });
 
@@ -483,7 +488,7 @@ export async function POST(req: NextRequest) {
         let document_diff_error: string | undefined;
         if (project) {
           try {
-            const diffContent = await callDashScope(MEMORY_DIFF_PROMPT, `会议日期：${meetingDate}\n\n当前项目主文档：\n${JSON.stringify(project.document, null, 2)}\n\n本次会议摘要：\n${JSON.stringify(typedSummary, null, 2)}\n\n请输出需要更新的字段及建议内容。`, apiKey);
+            const diffContent = await callDashScope(MEMORY_DIFF_PROMPT, `${langRule}\n\n会议日期：${meetingDate}\n\n当前项目主文档：\n${JSON.stringify(project.document, null, 2)}\n\n本次会议摘要：\n${JSON.stringify(typedSummary, null, 2)}\n\n请输出需要更新的字段及建议内容。`, apiKey);
             try { document_diff = extractJSON(diffContent); } catch { document_diff = null; }
           } catch (e) { document_diff_error = String(e); }
         }

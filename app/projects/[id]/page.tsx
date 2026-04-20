@@ -138,6 +138,22 @@ export default function ProjectDetailPage() {
   const [loading, setLoading] = useState(true);
   const [notFound, setNotFound] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [reembedding, setReembedding] = useState(false);
+  const [reembedResult, setReembedResult] = useState<string | null>(null);
+
+  const handleReembed = async () => {
+    setReembedding(true);
+    setReembedResult(null);
+    try {
+      const res = await fetch(`/api/projects/${id}/reembed`, { method: "POST" });
+      const data = await res.json();
+      setReembedResult(data.message ?? (res.ok ? "完成" : data.error ?? "失败"));
+    } catch {
+      setReembedResult("网络错误，请重试");
+    } finally {
+      setReembedding(false);
+    }
+  };
 
   const handleDeleteProject = async () => {
     if (!window.confirm(`确认删除项目「${project?.name}」？项目下所有会议记录也将一并删除，此操作不可撤销。`)) return;
@@ -186,6 +202,16 @@ export default function ProjectDetailPage() {
           <span className="text-sm font-semibold text-gray-900 dark:text-gray-100">{project.name}</span>
         </div>
         <div className="flex items-center gap-2">
+        {reembedResult && (
+          <span className="text-xs text-gray-500 dark:text-gray-400">{reembedResult}</span>
+        )}
+        <button
+          onClick={handleReembed}
+          disabled={reembedding}
+          className="px-3 py-1.5 rounded-lg text-sm font-medium border border-gray-200 dark:border-zinc-700 text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-zinc-800 disabled:opacity-50 transition-colors"
+        >
+          {reembedding ? "向量化中..." : "重新向量化"}
+        </button>
         <button
           onClick={handleDeleteProject}
           disabled={deleting}

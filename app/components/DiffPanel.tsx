@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { DocumentDiff, DiffUpdate, ProjectMemory } from "../types";
+import { DocumentDiff, ProjectMemory } from "../types";
 import TranscriptPanel from "./TranscriptPanel";
 
 interface Props {
@@ -31,7 +31,7 @@ function renderItem(item: unknown): string {
   if (typeof item === "string") return item;
   if (typeof item !== "object" || item === null) return String(item);
   const o = item as Record<string, unknown>;
-  if ("decision" in o) return `[${o.date}] ${o.decision}${o.rationale ? ` — ${o.rationale}` : ""}`;
+  if ("decision" in o) return `${o.date ? `[${o.date}] ` : ""}${o.decision}${o.rationale ? ` — ${o.rationale}` : ""}`;
   if ("issue" in o) return `${o.issue}${o.owner ? ` (${o.owner})` : ""}`;
   if ("risk" in o) return `${o.risk}${o.mitigation ? ` → ${o.mitigation}` : ""}`;
   if ("item" in o && "status" in o) return `${o.status === "done" ? "✓" : "○"} ${o.item}`;
@@ -49,7 +49,9 @@ function ValuePreview({ value }: { value: unknown }) {
     const o = value as Record<string, unknown>;
     if ("summary" in o)
       return <span>{o.summary as string} <span className="text-gray-400 dark:text-gray-500">截至 {o.as_of as string}</span></span>;
-    return <span>{JSON.stringify(value)}</span>;
+    const fallback = (o.summary ?? o.status ?? o.description ?? null) as string | null;
+    if (fallback) return <span>{fallback}{o.as_of ? <span className="text-gray-400 dark:text-gray-500"> 截至 {o.as_of as string}</span> : null}</span>;
+    return <span className="font-mono text-gray-500">{JSON.stringify(value)}</span>;
   }
 
   if (Array.isArray(value)) {
@@ -69,6 +71,56 @@ function ValuePreview({ value }: { value: unknown }) {
   return <span>{String(value)}</span>;
 }
 
+// ── Array diff helpers ────────────────────────────────────────────────────────
+
+type ArrayDiffState = {
+  unchanged: unknown[];
+  deleted: unknown[];
+  added: unknown[];
+  deletionChecked: boolean[]; // true = restore (keep), false = accept deletion (default)
+  additionChecked: boolean[]; // true = accept addition (default), false = reject
+};
+
+function computeArrayDiff(oldArr: unknown[], newArr: unknown[]): ArrayDiffState {
+  const oldStrs = oldArr.map((item) => JSON.stringify(item));
+  const newStrs = newArr.map((item) => JSON.stringify(item));
+
+  const unchanged: unknown[] = [];
+  const added: unknown[] = [];
+  const usedOldIndices = new Set<number>();
+
+  for (const item of newArr) {
+    const str = JSON.stringify(item);
+    const idx = oldStrs.findIndex((s, i) => s === str && !usedOldIndices.has(i));
+    if (idx >= 0) {
+      unchanged.push(item);
+      usedOldIndices.add(idx);
+    } else {
+      added.push(item);
+    }
+  }
+
+  const deleted = oldArr.filter((_, i) => !usedOldIndices.has(i));
+
+  return {
+    unchanged,
+    deleted,
+    added,
+    deletionChecked: deleted.map(() => false),
+    additionChecked: added.map(() => true),
+  };
+}
+
+// ── State types ───────────────────────────────────────────────────────────────
+
+type UpdateState = boolean | ArrayDiffState;
+
+function isArrayDiff(s: UpdateState): s is ArrayDiffState {
+  return typeof s === "object" && s !== null && "deletionChecked" in s;
+}
+
+// ── Main component ────────────────────────────────────────────────────────────
+
 export default function DiffPanel({
   diff,
   numberedTranscript,
@@ -77,23 +129,64 @@ export default function DiffPanel({
   projectDocument,
   onConfirmed,
 }: Props) {
-  const [checked, setChecked] = useState<Record<number, boolean>>(() =>
-    Object.fromEntries((diff?.updates ?? []).map((_, i) => [i, true]))
+  const updates = diff?.updates ?? [];
+
+  const [states, setStates] = useState<Record<number, UpdateState>>(() =>
+    Object.fromEntries(
+      updates.map((update, i) => {
+        const isArr = Array.isArray(update.new);
+        if (isArr) {
+          const oldArr = Array.isArray(update.old) ? (update.old as unknown[]) : [];
+          const newArr = update.new as unknown[];
+          return [i, computeArrayDiff(oldArr, newArr)];
+        }
+        return [i, true];
+      })
+    )
   );
+
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const updates = diff?.updates ?? [];
+  // Count: deletions accepted + additions accepted
+  const { totalSelected, totalItems } = updates.reduce(
+    (acc, _, i) => {
+      const s = states[i];
+      if (isArrayDiff(s)) {
+        acc.totalItems += s.deleted.length + s.added.length;
+        acc.totalSelected += s.deletionChecked.filter((v) => !v).length + s.additionChecked.filter(Boolean).length;
+      } else {
+        acc.totalItems += 1;
+        acc.totalSelected += s ? 1 : 0;
+      }
+      return acc;
+    },
+    { totalSelected: 0, totalItems: 0 },
+  );
 
   const handleConfirm = async () => {
-    const selected = updates.filter((_, i) => checked[i]);
-    if (selected.length === 0) { onConfirmed(); return; }
+    const newDoc = { ...projectDocument } as Record<string, unknown>;
+    let hasChanges = false;
 
-    const newDoc = { ...projectDocument };
-    for (const update of selected) {
-      (newDoc as Record<string, unknown>)[update.field] = update.new;
-    }
+    updates.forEach((update, i) => {
+      const s = states[i];
+      if (isArrayDiff(s)) {
+        const final = [
+          ...s.unchanged,
+          ...s.deleted.filter((_, j) => s.deletionChecked[j]),
+          ...s.added.filter((_, j) => s.additionChecked[j]),
+        ];
+        // Only write if anything actually changed from current document
+        newDoc[update.field] = final;
+        hasChanges = true;
+      } else if (s) {
+        newDoc[update.field] = update.new;
+        hasChanges = true;
+      }
+    });
+
+    if (!hasChanges) { onConfirmed(); return; }
 
     setSaving(true);
     setError(null);
@@ -124,8 +217,8 @@ export default function DiffPanel({
           <span className="text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wide">
             主文档更新建议
           </span>
-          {updates.length > 0 && !saved && (
-            <span className="text-xs text-gray-400">{updates.filter((_, i) => checked[i]).length}/{updates.length} 条已选</span>
+          {totalItems > 0 && !saved && (
+            <span className="text-xs text-gray-400">{totalSelected}/{totalItems} 条变更已选</span>
           )}
         </div>
 
@@ -133,41 +226,125 @@ export default function DiffPanel({
           <p className="text-sm text-gray-500 dark:text-gray-400 py-2">本次会议无需更新主文档</p>
         )}
 
-        {updates.map((update, i) => (
-          <div
-            key={i}
-            className={`rounded-lg border p-3 space-y-2 transition-colors ${
-              checked[i]
-                ? "border-blue-200 dark:border-blue-800 bg-blue-50/50 dark:bg-blue-950/20"
-                : "border-gray-100 dark:border-zinc-800 opacity-60"
-            }`}
-          >
-            <label className="flex items-center gap-2 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={checked[i]}
-                onChange={(e) => setChecked((prev) => ({ ...prev, [i]: e.target.checked }))}
-                className="rounded border-gray-300 text-blue-600"
-              />
-              <span className="text-xs font-semibold text-gray-700 dark:text-gray-300">
-                {FIELD_LABELS[update.field] ?? update.field}
-              </span>
-            </label>
-            <div className="pl-6 space-y-1.5 text-xs">
-              <div className="text-gray-400 line-through">
-                <ValuePreview value={update.old} />
-              </div>
-              <div className="text-gray-800 dark:text-gray-200">
-                <ValuePreview value={update.new} />
-              </div>
-              <p className="text-gray-400 dark:text-gray-500 italic">{update.reason}</p>
-            </div>
-          </div>
-        ))}
+        {updates.map((update, i) => {
+          const s = states[i];
+          const isArr = isArrayDiff(s);
 
-        {error && (
-          <p className="text-xs text-red-500">{error}</p>
-        )}
+          // Determine if "nothing selected" for dim effect
+          const nothingSelected = isArr
+            ? s.deletionChecked.every(Boolean) && s.additionChecked.every((v) => !v)
+            : !(s as boolean);
+
+          return (
+            <div
+              key={i}
+              className={`rounded-lg border p-3 space-y-2 transition-colors ${
+                nothingSelected
+                  ? "border-gray-100 dark:border-zinc-800 opacity-60"
+                  : "border-blue-200 dark:border-blue-800 bg-blue-50/50 dark:bg-blue-950/20"
+              }`}
+            >
+              {/* Field header */}
+              {isArr ? (
+                <span className="text-xs font-semibold text-gray-700 dark:text-gray-300">
+                  {FIELD_LABELS[update.field] ?? update.field}
+                </span>
+              ) : (
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={s as boolean}
+                    onChange={(e) => setStates((prev) => ({ ...prev, [i]: e.target.checked }))}
+                    className="rounded border-gray-300 text-blue-600"
+                  />
+                  <span className="text-xs font-semibold text-gray-700 dark:text-gray-300">
+                    {FIELD_LABELS[update.field] ?? update.field}
+                  </span>
+                </label>
+              )}
+
+              <div className="pl-2 space-y-1 text-xs">
+                {isArr ? (
+                  <ul className="space-y-1.5">
+                    {/* Unchanged: always kept, no checkbox */}
+                    {(s as ArrayDiffState).unchanged.map((item, j) => (
+                      <li key={`u-${j}`} className="flex items-start gap-2 pl-5">
+                        <span className="text-gray-500 dark:text-gray-400 leading-relaxed">
+                          {renderItem(item)}
+                        </span>
+                      </li>
+                    ))}
+
+                    {/* Deleted: unchecked = accept deletion (default); checked = restore */}
+                    {(s as ArrayDiffState).deleted.map((item, j) => {
+                      const checked = (s as ArrayDiffState).deletionChecked[j];
+                      return (
+                        <li key={`d-${j}`} className="flex items-start gap-2">
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            onChange={(e) =>
+                              setStates((prev) => {
+                                const cur = prev[i] as ArrayDiffState;
+                                const arr = [...cur.deletionChecked];
+                                arr[j] = e.target.checked;
+                                return { ...prev, [i]: { ...cur, deletionChecked: arr } };
+                              })
+                            }
+                            className="mt-0.5 rounded border-gray-300 text-blue-600 shrink-0"
+                          />
+                          <span className={`leading-relaxed ${checked ? "text-gray-700 dark:text-gray-300" : "line-through text-red-400 dark:text-red-500 opacity-70"}`}>
+                            {renderItem(item)}
+                          </span>
+                          {!checked && <span className="text-red-400 dark:text-red-500 shrink-0">−</span>}
+                        </li>
+                      );
+                    })}
+
+                    {/* Added: checked = accept (default); unchecked = reject */}
+                    {(s as ArrayDiffState).added.map((item, j) => {
+                      const checked = (s as ArrayDiffState).additionChecked[j];
+                      return (
+                        <li key={`a-${j}`} className="flex items-start gap-2">
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            onChange={(e) =>
+                              setStates((prev) => {
+                                const cur = prev[i] as ArrayDiffState;
+                                const arr = [...cur.additionChecked];
+                                arr[j] = e.target.checked;
+                                return { ...prev, [i]: { ...cur, additionChecked: arr } };
+                              })
+                            }
+                            className="mt-0.5 rounded border-gray-300 text-blue-600 shrink-0"
+                          />
+                          <span className={`leading-relaxed ${checked ? "text-blue-700 dark:text-blue-400" : "opacity-40 line-through"}`}>
+                            {renderItem(item)}
+                          </span>
+                          {checked && <span className="text-blue-500 dark:text-blue-400 shrink-0">+</span>}
+                        </li>
+                      );
+                    })}
+                  </ul>
+                ) : (
+                  <>
+                    <div className="text-gray-400 line-through pl-4">
+                      <ValuePreview value={update.old} />
+                    </div>
+                    <div className="text-gray-800 dark:text-gray-200 pl-4">
+                      <ValuePreview value={update.new} />
+                    </div>
+                  </>
+                )}
+
+                <p className="text-gray-400 dark:text-gray-500 italic pl-4 pt-1">{update.reason}</p>
+              </div>
+            </div>
+          );
+        })}
+
+        {error && <p className="text-xs text-red-500">{error}</p>}
 
         <button
           onClick={handleConfirm}
