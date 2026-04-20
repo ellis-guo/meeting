@@ -4,17 +4,25 @@ import { prisma } from "@/lib/prisma";
 import { decryptJSON } from "@/lib/crypto";
 import { getDashScopeKey } from "@/lib/apiKey.server";
 
-const ASK_SYSTEM_PROMPT = `你是一位项目助手，根据提供的项目文档和会议记录片段回答用户问题。
+const ASK_SYSTEM_PROMPT = `你是一位项目助手，帮助用户理解会议讨论和项目进展。
+
 规则：
-1. 仅基于提供的 context 回答，不推断或补充。
-2. 若 context 中无相关信息，直接说"现有会议记录中未涉及该问题"。
-3. 回答简洁，引用具体会议日期或说话人作为依据。
-4. 仅输出合法的 JSON，不得包含 Markdown、代码块或任何解释性文字。
+1. 基于提供的 context 综合归纳，可跨多个片段整合信息，不得编造 context 中不存在的事实。
+2. 若 context 完全无相关信息，直接回答"现有记录中未涉及该问题"。
+3. 允许用预训练知识解释专业术语或补充背景，但须用"根据通用知识"明确标注。
+4. 根据问题类型选择回答结构：
+   - 进度/状态类 → 分阶段或分维度总结
+   - 事实确认类 → 直接回答 + 来源
+   - 讨论/决策类 → 列出各方观点 + 结论
+5. 来源（说话人、时间点）自然嵌入行文，无需集中列在末尾。
+6. 以结论性段落收尾，给出明确判断。
+7. 项目主文档是最高优先级的背景知识，应优先用于回答进度、目标、成员、决策类问题；引用主文档内容时，sources 中填 chunk_type: "project_document"。
+8. 仅输出合法 JSON，answer 字段可含换行符，不得包含 Markdown 代码块或任何 JSON 以外的内容。
 
 输出 Schema：
 {
   "answer": "string",
-  "sources": [{ "chunk_type": "string", "section_title": "string or null", "speaker": "string or null", "meeting_date": "string or null" }]
+  "sources": [{ "chunk_type": "summary | transcript | project_document", "section_title": "string or null", "speaker": "string or null", "meeting_date": "string or null" }]
 }`;
 
 function extractJSON(text: string): unknown {
@@ -53,6 +61,57 @@ async function callDashScope(systemPrompt: string, userMessage: string, apiKey: 
   const content = data.choices?.[0]?.message?.content;
   if (!content) throw new Error("Empty response from model");
   return content;
+}
+
+type QueryAnalysis = {
+  queries: string[];
+  intent: "project" | "speaker" | "date" | "meeting" | "general";
+  speakers: string[];
+  date_filter: string | null;
+};
+
+const ANALYZE_SYSTEM_PROMPT = `你是查询分析助手。分析关于项目会议记录的问题，同时完成两件事：
+1. 生成2个语义相同但措辞不同的改写版本，用于提升检索覆盖率
+2. 分类意图并提取关键实体
+
+意图分类（选一）：
+- project：宏观项目问题（目标/成员/背景/整体进度），主文档和摘要已足够回答
+- speaker：询问某个或某几个特定人物的发言、观点或行动
+- date：问题中出现了具体日期（如"4月15日"、"上周三"），提取为 YYYY-MM-DD
+- meeting：询问某次会议内容（含"上次/最近会议"），无具体日期
+- general：跨会议综合问题、具体细节查询、或以上均不适合
+
+字段说明：
+- speakers：提取到的人物姓名数组，仅 intent=speaker 时填写，其余填 []；最多2个
+- date_filter：intent=date 时填 YYYY-MM-DD，intent=meeting 且含"上次/最近"时填 "latest"，其余填 null
+
+仅输出合法 JSON：
+{
+  "queries": ["改写版本1", "改写版本2"],
+  "intent": "project | speaker | date | meeting | general",
+  "speakers": [],
+  "date_filter": null
+}`;
+
+const ANALYZE_FALLBACK: QueryAnalysis = { queries: [], intent: "general", speakers: [], date_filter: null };
+
+async function analyzeQuery(question: string, apiKey: string): Promise<QueryAnalysis> {
+  try {
+    const raw = await callDashScope(ANALYZE_SYSTEM_PROMPT, `问题：${question}`, apiKey);
+    const parsed = extractJSON(raw) as Record<string, unknown>;
+    const intent = (["project", "speaker", "date", "meeting", "general"] as const)
+      .find(i => i === parsed.intent) ?? "general";
+    const queries = Array.isArray(parsed.queries)
+      ? (parsed.queries as unknown[]).filter((q): q is string => typeof q === "string").slice(0, 2)
+      : [];
+    const speakers = Array.isArray(parsed.speakers)
+      ? (parsed.speakers as unknown[]).filter((s): s is string => typeof s === "string" && s.trim().length > 0).slice(0, 2)
+      : [];
+    const date_filter = typeof parsed.date_filter === "string" ? parsed.date_filter : null;
+    return { queries, intent, speakers, date_filter };
+  } catch {
+    return ANALYZE_FALLBACK;
+  }
 }
 
 async function fetchEmbedding(text: string, apiKey: string): Promise<number[]> {
@@ -107,17 +166,13 @@ function rrfMerge(lists: ChunkRow[][], k = 60): ChunkRow[] {
     .sort((a, b) => (scores.get(b.id) ?? 0) - (scores.get(a.id) ?? 0));
 }
 
-// Common Chinese functional words to exclude as standalone keywords
 const ZH_STOP = new Set("了的地得是在有和与或不对于关于什么哪里哪谁如何怎么为什么吗呢啊呀吧嗯".split(""));
 
 function extractKeywords(text: string): string[] {
-  // Split by punctuation/spaces into segments
   const segments = text
     .split(/[\s，。？！,.?!\r\n、：:；;「」【】()（）]+/)
     .map(s => s.trim())
     .filter(s => s.length >= 2);
-
-  // Extract contiguous non-stop CJK runs (likely proper nouns / place names)
   const cjkRuns: string[] = [];
   let run = "";
   for (const ch of text) {
@@ -130,11 +185,12 @@ function extractKeywords(text: string): string[] {
     }
   }
   if (run.length >= 2) cjkRuns.push(run);
-
-  // Also keep Latin/digit tokens (e.g. person names like "Ellis")
   const latinRuns = Array.from(text.matchAll(/[A-Za-z0-9_\-]{2,}/g), m => m[0]);
-
   return [...new Set([...segments, ...cjkRuns, ...latinRuns])].slice(0, 8);
+}
+
+function escapeRegex(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 export async function POST(
@@ -164,70 +220,210 @@ export async function POST(
     return NextResponse.json({ error: "Project not found" }, { status: 404 });
   }
 
-  // Embed question
+  const tTotal = Date.now();
+
+  // Phase 1: analyze query (rewrite + intent + entities) + embed original — parallel
   let queryVec: number[];
+  let analysis: QueryAnalysis;
+  let analyzeMs = 0, embedOriginalMs = 0;
   try {
-    queryVec = await fetchEmbedding(question, apiKey);
+    [[analysis, analyzeMs], [queryVec, embedOriginalMs]] = await Promise.all([
+      (async () => { const t = Date.now(); const r = await analyzeQuery(question, apiKey); return [r, Date.now() - t] as [QueryAnalysis, number]; })(),
+      (async () => { const t = Date.now(); const r = await fetchEmbedding(question, apiKey); return [r, Date.now() - t] as [number[], number]; })(),
+    ]);
   } catch (e) {
     return NextResponse.json({ error: String(e) }, { status: 502 });
   }
 
-  const vecStr = `[${queryVec.join(",")}]`;
+  // Phase 2: embed rewrite variants + resolve date — parallel
+  const tPhase2 = Date.now();
+  const [variantVecs, resolvedDate] = await Promise.all([
+    Promise.all(analysis.queries.map(q => fetchEmbedding(q, apiKey).catch(() => null))),
+    analysis.date_filter === "latest"
+      ? prisma.$queryRaw<[{ d: string | null }]>`
+          SELECT MAX(meeting_date) as d FROM "Chunk" WHERE project_id = ${projectId}
+        `.then(r => r[0]?.d ?? null)
+      : Promise.resolve(
+          analysis.date_filter && /^\d{4}-\d{2}-\d{2}$/.test(analysis.date_filter)
+            ? analysis.date_filter
+            : null
+        ),
+  ]);
+  const embedVariantsMs = Date.now() - tPhase2;
 
-  // Four-way parallel retrieval
-  const keywords = extractKeywords(question);
-  // Escape regex special chars, join with | for PostgreSQL ~* (case-insensitive regex match)
-  const keywordPattern = keywords.length > 0
-    ? keywords.map(k => k.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|")
-    : null;
+  const allVecs = [queryVec, ...variantVecs.filter((v): v is number[] => v !== null)];
+  const allVecStrs = allVecs.map(v => `[${v.join(",")}]`);
 
-  const [summaryHits, transcriptHits, bm25Hits, ilikeHits] = await Promise.all([
-    prisma.$queryRaw<ChunkRow[]>`
-      SELECT id, meeting_id, chunk_type, section_title, speaker, meeting_date, search_text
-      FROM "Chunk"
-      WHERE project_id = ${projectId}
-        AND chunk_type = 'summary'
-        AND embedding IS NOT NULL
-        AND embedding <=> ${vecStr}::vector < 0.5
-      ORDER BY embedding <=> ${vecStr}::vector
-      LIMIT 5
-    `,
-    prisma.$queryRaw<ChunkRow[]>`
-      SELECT id, meeting_id, chunk_type, section_title, speaker, meeting_date, search_text
-      FROM "Chunk"
-      WHERE project_id = ${projectId}
-        AND chunk_type = 'transcript'
-        AND embedding IS NOT NULL
-        AND embedding <=> ${vecStr}::vector < 0.5
-      ORDER BY embedding <=> ${vecStr}::vector
-      LIMIT 10
-    `,
-    prisma.$queryRaw<ChunkRow[]>`
-      SELECT id, meeting_id, chunk_type, section_title, speaker, meeting_date, search_text
-      FROM "Chunk"
-      WHERE project_id = ${projectId}
-        AND search_text IS NOT NULL
-        AND to_tsvector('simple', coalesce(search_text, ''))
-            @@ websearch_to_tsquery('simple', ${question})
-      ORDER BY ts_rank(
-        to_tsvector('simple', coalesce(search_text, '')),
-        websearch_to_tsquery('simple', ${question})
-      ) DESC
-      LIMIT 5
-    `,
-    keywordPattern
-      ? prisma.$queryRaw<ChunkRow[]>`
+  // Phase 3: intent-based retrieval
+  const tRetrieval = Date.now();
+
+  // Determine effective intent with fallback rules
+  const validSpeakers = analysis.speakers.filter(s => s.trim().length > 0).slice(0, 2);
+  const effectiveIntent =
+    analysis.intent === "speaker" && validSpeakers.length === 0 ? "general"
+    : analysis.intent === "date" && !resolvedDate ? "general"
+    : analysis.intent;
+
+  let summaryResultsPerVec: ChunkRow[][] = [];
+  let transcriptResultsPerVec: ChunkRow[][] = [];
+  let bm25Hits: ChunkRow[] = [];
+  let ilikeHits: ChunkRow[] = [];
+
+  if (effectiveIntent === "project") {
+    // Project doc (always in context) + summary chunks only
+    summaryResultsPerVec = await Promise.all(allVecStrs.map(vecStr =>
+      prisma.$queryRaw<ChunkRow[]>`
+        SELECT id, meeting_id, chunk_type, section_title, speaker, meeting_date, search_text
+        FROM "Chunk"
+        WHERE project_id = ${projectId}
+          AND chunk_type = 'summary'
+          AND embedding IS NOT NULL
+          AND embedding <=> ${vecStr}::vector < 0.5
+        ORDER BY embedding <=> ${vecStr}::vector
+        LIMIT 5
+      `
+    ));
+
+  } else if (effectiveIntent === "speaker") {
+    // Transcript chunks filtered by speaker — no distance threshold, no summary
+    const speakerPattern = validSpeakers.map(escapeRegex).join("|");
+    transcriptResultsPerVec = await Promise.all(allVecStrs.map(vecStr =>
+      prisma.$queryRaw<ChunkRow[]>`
+        SELECT id, meeting_id, chunk_type, section_title, speaker, meeting_date, search_text
+        FROM "Chunk"
+        WHERE project_id = ${projectId}
+          AND chunk_type = 'transcript'
+          AND embedding IS NOT NULL
+          AND speaker ~* ${speakerPattern}
+        ORDER BY embedding <=> ${vecStr}::vector
+        LIMIT 10
+      `
+    ));
+
+  } else if (effectiveIntent === "date" || (effectiveIntent === "meeting" && resolvedDate)) {
+    // Summary + transcript filtered by resolved date (non-null guaranteed here)
+    [summaryResultsPerVec, transcriptResultsPerVec] = await Promise.all([
+      Promise.all(allVecStrs.map(vecStr =>
+        prisma.$queryRaw<ChunkRow[]>`
           SELECT id, meeting_id, chunk_type, section_title, speaker, meeting_date, search_text
           FROM "Chunk"
           WHERE project_id = ${projectId}
-            AND search_text IS NOT NULL
-            AND search_text ~* ${keywordPattern}
+            AND chunk_type = 'summary'
+            AND meeting_date = ${resolvedDate}
+            AND embedding IS NOT NULL
+            AND embedding <=> ${vecStr}::vector < 0.5
+          ORDER BY embedding <=> ${vecStr}::vector
           LIMIT 5
         `
-      : Promise.resolve([] as ChunkRow[]),
-  ]);
+      )),
+      Promise.all(allVecStrs.map(vecStr =>
+        prisma.$queryRaw<ChunkRow[]>`
+          SELECT id, meeting_id, chunk_type, section_title, speaker, meeting_date, search_text
+          FROM "Chunk"
+          WHERE project_id = ${projectId}
+            AND chunk_type = 'transcript'
+            AND meeting_date = ${resolvedDate}
+            AND embedding IS NOT NULL
+            AND embedding <=> ${vecStr}::vector < 0.5
+          ORDER BY embedding <=> ${vecStr}::vector
+          LIMIT 10
+        `
+      )),
+    ]);
 
-  const merged = rrfMerge([summaryHits, transcriptHits, bm25Hits, ilikeHits]).slice(0, 8);
+  } else if (effectiveIntent === "meeting") {
+    // Summary + transcript, no date filter, no BM25/regex
+    [summaryResultsPerVec, transcriptResultsPerVec] = await Promise.all([
+      Promise.all(allVecStrs.map(vecStr =>
+        prisma.$queryRaw<ChunkRow[]>`
+          SELECT id, meeting_id, chunk_type, section_title, speaker, meeting_date, search_text
+          FROM "Chunk"
+          WHERE project_id = ${projectId}
+            AND chunk_type = 'summary'
+            AND embedding IS NOT NULL
+            AND embedding <=> ${vecStr}::vector < 0.5
+          ORDER BY embedding <=> ${vecStr}::vector
+          LIMIT 5
+        `
+      )),
+      Promise.all(allVecStrs.map(vecStr =>
+        prisma.$queryRaw<ChunkRow[]>`
+          SELECT id, meeting_id, chunk_type, section_title, speaker, meeting_date, search_text
+          FROM "Chunk"
+          WHERE project_id = ${projectId}
+            AND chunk_type = 'transcript'
+            AND embedding IS NOT NULL
+            AND embedding <=> ${vecStr}::vector < 0.5
+          ORDER BY embedding <=> ${vecStr}::vector
+          LIMIT 10
+        `
+      )),
+    ]);
+
+  } else {
+    // general: full 4-way retrieval
+    const keywords = extractKeywords(question);
+    const keywordPattern = keywords.length > 0 ? keywords.map(escapeRegex).join("|") : null;
+
+    [summaryResultsPerVec, transcriptResultsPerVec, bm25Hits, ilikeHits] = await Promise.all([
+      Promise.all(allVecStrs.map(vecStr =>
+        prisma.$queryRaw<ChunkRow[]>`
+          SELECT id, meeting_id, chunk_type, section_title, speaker, meeting_date, search_text
+          FROM "Chunk"
+          WHERE project_id = ${projectId}
+            AND chunk_type = 'summary'
+            AND embedding IS NOT NULL
+            AND embedding <=> ${vecStr}::vector < 0.5
+          ORDER BY embedding <=> ${vecStr}::vector
+          LIMIT 5
+        `
+      )),
+      Promise.all(allVecStrs.map(vecStr =>
+        prisma.$queryRaw<ChunkRow[]>`
+          SELECT id, meeting_id, chunk_type, section_title, speaker, meeting_date, search_text
+          FROM "Chunk"
+          WHERE project_id = ${projectId}
+            AND chunk_type = 'transcript'
+            AND embedding IS NOT NULL
+            AND embedding <=> ${vecStr}::vector < 0.5
+          ORDER BY embedding <=> ${vecStr}::vector
+          LIMIT 10
+        `
+      )),
+      prisma.$queryRaw<ChunkRow[]>`
+        SELECT id, meeting_id, chunk_type, section_title, speaker, meeting_date, search_text
+        FROM "Chunk"
+        WHERE project_id = ${projectId}
+          AND search_text IS NOT NULL
+          AND to_tsvector('simple', coalesce(search_text, ''))
+              @@ websearch_to_tsquery('simple', ${question})
+        ORDER BY ts_rank(
+          to_tsvector('simple', coalesce(search_text, '')),
+          websearch_to_tsquery('simple', ${question})
+        ) DESC
+        LIMIT 5
+      `,
+      keywordPattern
+        ? prisma.$queryRaw<ChunkRow[]>`
+            SELECT id, meeting_id, chunk_type, section_title, speaker, meeting_date, search_text
+            FROM "Chunk"
+            WHERE project_id = ${projectId}
+              AND search_text IS NOT NULL
+              AND search_text ~* ${keywordPattern}
+            LIMIT 5
+          `
+        : Promise.resolve([] as ChunkRow[]),
+    ]);
+  }
+
+  const retrievalMs = Date.now() - tRetrieval;
+
+  const merged = rrfMerge([
+    ...summaryResultsPerVec,
+    ...transcriptResultsPerVec,
+    bm25Hits,
+    ilikeHits,
+  ]).slice(0, 8);
 
   const projectDoc = project.document ? decryptJSON(project.document) : null;
 
@@ -244,29 +440,40 @@ export async function POST(
 
   const userMessage = `${contextParts.join("\n\n===\n\n")}\n\n问题：${question}`;
 
+  const tAnswer = Date.now();
   let raw_answer: string;
   try {
     raw_answer = await callDashScope(ASK_SYSTEM_PROMPT, userMessage, apiKey);
   } catch (e) {
     return NextResponse.json({ error: String(e) }, { status: 502 });
   }
+  const answerMs = Date.now() - tAnswer;
 
-  let parsed: { answer?: string } = {};
+  let parsed: { answer?: string; sources?: Array<{ chunk_type?: string; section_title?: string | null; speaker?: string | null; meeting_date?: string | null }> } = {};
   try {
-    parsed = extractJSON(raw_answer) as { answer?: string };
+    parsed = extractJSON(raw_answer) as typeof parsed;
   } catch {
     return NextResponse.json({ error: "Failed to parse model response", raw: raw_answer }, { status: 502 });
   }
 
-  const sources = merged.map((c) => ({
-    meeting_id: c.meeting_id,
-    chunk_type: c.chunk_type,
-    section_title: c.section_title,
-    speaker: c.speaker,
-    meeting_date: c.meeting_date,
-  }));
+  const llmSources = Array.isArray(parsed.sources) ? parsed.sources : [];
+  const sources = llmSources.map((s) => {
+    if (s.chunk_type === "project_document") {
+      return { meeting_id: null, chunk_type: "project_document", section_title: s.section_title ?? null, speaker: null, meeting_date: null };
+    }
+    const match = merged.find((c) =>
+      c.meeting_date === s.meeting_date &&
+      (c.section_title === s.section_title || c.speaker === s.speaker)
+    );
+    return {
+      meeting_id: match?.meeting_id ?? null,
+      chunk_type: s.chunk_type ?? "summary",
+      section_title: s.section_title ?? null,
+      speaker: s.speaker ?? null,
+      meeting_date: s.meeting_date ?? null,
+    };
+  });
 
-  // Count all chunks for this project, split by embedding status
   const [totalChunksRes, embeddedChunksRes] = await Promise.all([
     prisma.$queryRaw<[{ count: bigint }]>`SELECT COUNT(*)::int AS count FROM "Chunk" WHERE project_id = ${projectId}`,
     prisma.$queryRaw<[{ count: bigint }]>`SELECT COUNT(*)::int AS count FROM "Chunk" WHERE project_id = ${projectId} AND embedding IS NOT NULL`,
@@ -274,7 +481,6 @@ export async function POST(
   const totalChunks = Number(totalChunksRes[0]?.count ?? 0);
   const embeddedChunks = Number(embeddedChunksRes[0]?.count ?? 0);
 
-  // Fetch recent embedding errors from ProcessingLog for meetings in this project
   const projectMeetingIds = await prisma.meeting.findMany({
     where: { project_id: projectId },
     select: { id: true },
@@ -291,9 +497,33 @@ export async function POST(
     try { return decryptJSON<Record<string, unknown>>(log.context); } catch { return log.context; }
   });
 
+  const citationCounts = { project_document: 0, summary: 0, transcript: 0 };
+  for (const s of sources) {
+    const t = s.chunk_type as keyof typeof citationCounts;
+    if (t in citationCounts) citationCounts[t]++;
+  }
+
   const _debug = {
-    summary_hits: summaryHits.length,
-    transcript_hits: transcriptHits.length,
+    source_citation_summary: citationCounts,
+    timings_ms: {
+      analyze_llm: analyzeMs,
+      embed_original: embedOriginalMs,
+      embed_variants: embedVariantsMs,
+      retrieval: retrievalMs,
+      answer_llm: answerMs,
+      total: Date.now() - tTotal,
+    },
+    routing: {
+      intent: analysis.intent,
+      effective_intent: effectiveIntent,
+      speakers: validSpeakers,
+      date_filter: analysis.date_filter,
+      resolved_date: resolvedDate,
+    },
+    rewritten_queries: analysis.queries,
+    query_vectors_count: allVecs.length,
+    summary_hits: summaryResultsPerVec.map(r => r.length),
+    transcript_hits: transcriptResultsPerVec.map(r => r.length),
     bm25_hits: bm25Hits.length,
     ilike_hits: ilikeHits.length,
     merged_count: merged.length,
