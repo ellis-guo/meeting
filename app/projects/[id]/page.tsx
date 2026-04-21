@@ -1,23 +1,60 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { Project } from "@/app/types";
 import ProjectMemoryPanel from "@/app/components/ProjectMemoryPanel";
 
+const SOURCES_SEP = "%%SOURCES%%";
+
 type AskSource = {
-  meeting_id: string;
+  meeting_id: string | null;
   chunk_type: string;
   section_title: string | null;
   speaker: string | null;
   meeting_date: string | null;
 };
 
+type CitationResolver = (date: string, section: string) => string | null;
+
+function renderInline(text: string, resolve?: CitationResolver): React.ReactNode {
+  const parts = text.split(/(\*\*[^*]+\*\*|\[\d{4}-\d{2}-\d{2}\s*·[^\]]+\])/g);
+  return parts.map((part, i) => {
+    if (part.startsWith("**") && part.endsWith("**")) {
+      return <strong key={i}>{part.slice(2, -2)}</strong>;
+    }
+    if (resolve) {
+      const m = part.match(/^\[(\d{4}-\d{2}-\d{2})\s*·\s*([^\]]+)\]$/);
+      if (m) {
+        const href = resolve(m[1], m[2].trim());
+        return href
+          ? <a key={i} href={href} target="_blank" rel="noopener noreferrer" className="underline decoration-gray-400 dark:decoration-gray-600 text-gray-500 dark:text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 transition-colors text-xs">{part}</a>
+          : <span key={i} className="text-gray-400 dark:text-gray-500 text-xs">{part}</span>;
+      }
+    }
+    return part;
+  });
+}
+
+function renderAnswer(text: string, resolve?: CitationResolver): React.ReactNode {
+  const lines = text.split("\n");
+  return lines.map((line, i) => {
+    const h2 = line.match(/^##\s+(.+)/);
+    const h3 = line.match(/^###\s+(.+)/);
+    const bullet = line.match(/^\*\s+(.+)/);
+    if (h2) return <p key={i} className="text-base font-semibold text-gray-900 dark:text-gray-50 mt-4 mb-0.5">{renderInline(h2[1], resolve)}</p>;
+    if (h3) return <p key={i} className="font-medium text-gray-800 dark:text-gray-100 mt-3 mb-0.5">{renderInline(h3[1], resolve)}</p>;
+    if (bullet) return <p key={i} className="flex gap-2 pl-2"><span className="shrink-0 text-gray-400">•</span><span>{renderInline(bullet[1], resolve)}</span></p>;
+    if (line === "") return <br key={i} />;
+    return <Fragment key={i}>{renderInline(line, resolve)}<br /></Fragment>;
+  });
+}
+
 function ProjectAskPanel({ projectId }: { projectId: string }) {
   const [question, setQuestion] = useState("");
   const [asking, setAsking] = useState(false);
-  const [answer, setAnswer] = useState<string | null>(null);
+  const [rawText, setRawText] = useState<string | null>(null);
   const [sources, setSources] = useState<AskSource[]>([]);
   const [error, setError] = useState<string | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -25,7 +62,7 @@ function ProjectAskPanel({ projectId }: { projectId: string }) {
   const handleAsk = async () => {
     if (!question.trim() || asking) return;
     setAsking(true);
-    setAnswer(null);
+    setRawText(null);
     setSources([]);
     setError(null);
     try {
@@ -34,12 +71,38 @@ function ProjectAskPanel({ projectId }: { projectId: string }) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ question }),
       });
-      const data = await res.json();
-      if (!res.ok) {
-        setError(data.error ?? "请求失败");
-      } else {
-        setAnswer(data.answer ?? null);
-        setSources(Array.isArray(data.sources) ? data.sources : []);
+
+      if (!res.body) {
+        setError("请求失败");
+        return;
+      }
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = "";
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        const blocks = buf.split("\n\n");
+        buf = blocks.pop() ?? "";
+
+        for (const block of blocks) {
+          const event = block.match(/^event: (\w+)/)?.[1];
+          const dataStr = block.match(/^data: (.+)$/m)?.[1];
+          if (!event || !dataStr) continue;
+          try {
+            const data = JSON.parse(dataStr) as Record<string, unknown>;
+            if (event === "token") {
+              setRawText((prev) => (prev ?? "") + ((data.text as string) ?? ""));
+            } else if (event === "done") {
+              setSources(Array.isArray(data.sources) ? (data.sources as AskSource[]) : []);
+            } else if (event === "error") {
+              setError((data.error as string) ?? "请求失败");
+            }
+          } catch { /* skip malformed */ }
+        }
       }
     } catch {
       setError("网络错误，请重试");
@@ -54,6 +117,13 @@ function ProjectAskPanel({ projectId }: { projectId: string }) {
       handleAsk();
     }
   };
+
+  const displayText = rawText !== null
+    ? (() => {
+        const sepIdx = rawText.indexOf(SOURCES_SEP);
+        return sepIdx !== -1 ? rawText.slice(0, sepIdx).trimEnd() : rawText;
+      })()
+    : null;
 
   return (
     <section className="space-y-3">
@@ -82,27 +152,17 @@ function ProjectAskPanel({ projectId }: { projectId: string }) {
           <p className="text-sm text-red-500 dark:text-red-400">{error}</p>
         )}
 
-        {answer !== null && (
-          <div className="space-y-3 pt-1 border-t border-gray-100 dark:border-zinc-800">
-            <p className="text-sm text-gray-800 dark:text-gray-200 leading-relaxed whitespace-pre-wrap">{answer}</p>
-            {sources.length > 0 && (
-              <div className="space-y-1">
-                <p className="text-xs font-medium text-gray-400 dark:text-gray-500 uppercase tracking-wide">来源</p>
-                <div className="flex flex-wrap gap-2">
-                  {sources.map((s, i) => (
-                    <Link
-                      key={i}
-                      href={`/projects/${projectId}/meetings/${s.meeting_id}`}
-                      className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs bg-gray-100 dark:bg-zinc-800 text-gray-600 dark:text-gray-400 hover:bg-blue-50 dark:hover:bg-blue-950/30 hover:text-blue-600 dark:hover:text-blue-400 transition-colors"
-                    >
-                      {s.meeting_date && <span>{s.meeting_date}</span>}
-                      {s.meeting_date && (s.section_title || s.speaker) && <span className="text-gray-300 dark:text-zinc-600">·</span>}
-                      {s.section_title ?? s.speaker ?? "片段"}
-                    </Link>
-                  ))}
-                </div>
-              </div>
-            )}
+        {displayText !== null && (
+          <div className="pt-1 border-t border-gray-100 dark:border-zinc-800">
+            <div className="text-sm text-gray-800 dark:text-gray-200 leading-relaxed">
+              {renderAnswer(displayText, (date, section) => {
+                const s = sources.find(src => src.meeting_date === date && src.section_title?.trim() === section);
+                return s?.meeting_id ? `/projects/${projectId}/meetings/${s.meeting_id}` : null;
+              })}
+              {asking && (
+                <span className="inline-block w-0.5 h-3.5 ml-0.5 bg-blue-500 animate-pulse align-middle" />
+              )}
+            </div>
           </div>
         )}
       </div>

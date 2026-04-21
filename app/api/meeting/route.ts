@@ -287,9 +287,13 @@ function renderSectionText(section: Section): string {
 
 function collectSourceLines(section: Section): number[] {
   const c = section.content;
-  if (c.type === "text") return c.source_lines;
-  if (c.type === "bullets") return c.items.flatMap((i) => [...i.source_lines, ...(i.sub_items?.flatMap((s) => s.source_lines) ?? [])]);
-  return c.rows.flatMap((r) => r.source_lines);
+  const safe = (v: unknown): number[] => Array.isArray(v) ? (v as number[]) : [];
+  if (c.type === "text") return safe(c.source_lines);
+  if (c.type === "bullets") return c.items.flatMap((i) => [
+    ...safe(i.source_lines),
+    ...(i.sub_items?.flatMap((s) => safe(s.source_lines)) ?? []),
+  ]);
+  return c.rows.flatMap((r) => safe(r.source_lines));
 }
 
 function buildSummaryChunks(summary: Summary, meetingId: string, projectId?: string): ChunkInput[] {

@@ -324,7 +324,13 @@ export default function MeetingFlow({ projectId, projectDocument, onDiffConfirme
             qaEntered ? "opacity-100 translate-y-0" : "opacity-0 translate-y-6"
           }`}
         >
-          <MeetingAskPanel meetingId={meetingId} />
+          <MeetingAskPanel
+            meetingId={meetingId}
+            onLineClick={(lineNum) => {
+              setHighlightedLines([lineNum]);
+              document.getElementById(`line-${lineNum}`)?.scrollIntoView({ behavior: "smooth", block: "center" });
+            }}
+          />
         </div>
       )}
 
@@ -352,7 +358,7 @@ export default function MeetingFlow({ projectId, projectDocument, onDiffConfirme
       {popup && !isEditing && (
         <div
           className="fixed bg-white dark:bg-zinc-900 border border-gray-200 dark:border-zinc-700 rounded-lg shadow-lg p-4 z-50 min-w-44 print:hidden"
-          style={{ left: popup.x, top: popup.y }}
+          style={{ left: popup.x, top: Math.min(popup.y, window.innerHeight - 220) }}
         >
           <div className="flex items-center justify-between mb-3">
             <span className="text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wide">来源</span>

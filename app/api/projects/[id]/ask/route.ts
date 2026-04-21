@@ -1,8 +1,10 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest } from "next/server";
 import { auth } from "@clerk/nextjs/server";
 import { prisma } from "@/lib/prisma";
 import { decryptJSON } from "@/lib/crypto";
 import { getDashScopeKey } from "@/lib/apiKey.server";
+
+const SOURCES_SEP = "%%SOURCES%%";
 
 const ASK_SYSTEM_PROMPT = `你是一位项目助手，帮助用户理解会议讨论和项目进展。
 
@@ -14,16 +16,14 @@ const ASK_SYSTEM_PROMPT = `你是一位项目助手，帮助用户理解会议�
    - 进度/状态类 → 分阶段或分维度总结
    - 事实确认类 → 直接回答 + 来源
    - 讨论/决策类 → 列出各方观点 + 结论
-5. 来源（说话人、时间点）自然嵌入行文，无需集中列在末尾。
+5. 对引用的具体事实或结论，在其后紧跟 [YYYY-MM-DD · 小节标题] 格式的行内来源标注（如 [2026-03-19 · 行动项]）；来源同时在 %%SOURCES%% 后列出供系统索引。
 6. 以结论性段落收尾，给出明确判断。
-7. 项目主文档是最高优先级的背景知识，应优先用于回答进度、目标、成员、决策类问题；引用主文档内容时，sources 中填 chunk_type: "project_document"。
-8. 仅输出合法 JSON，answer 字段可含换行符，不得包含 Markdown 代码块或任何 JSON 以外的内容。
+7. 项目主文档是最高优先级的背景知识，应优先用于回答进度、目标、成员、决策类问题。
 
-输出 Schema：
-{
-  "answer": "string",
-  "sources": [{ "chunk_type": "summary | transcript | project_document", "section_title": "string or null", "speaker": "string or null", "meeting_date": "string or null" }]
-}`;
+输出格式（严格遵守，分两部分）：
+第一部分：完整回答文字（可含换行和 **粗体**）
+第二部分：另起一行写 %%SOURCES%%，然后输出来源 JSON 数组：
+[{"chunk_type":"summary | transcript | project_document","section_title":"字符串或null","speaker":"字符串或null","meeting_date":"YYYY-MM-DD或null"}]`;
 
 function extractJSON(text: string): unknown {
   const start = text.indexOf("{");
@@ -32,6 +32,99 @@ function extractJSON(text: string): unknown {
     throw new Error("No valid JSON object found in response");
   }
   return JSON.parse(text.slice(start, end + 1));
+}
+
+async function callDashScopeStream(
+  systemPrompt: string,
+  userMessage: string,
+  apiKey: string,
+  onToken: (text: string) => void,
+  sep = "",
+): Promise<string> {
+  const res = await fetch(
+    "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions",
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+      body: JSON.stringify({
+        model: "qwen3.6-plus",
+        messages: [{ role: "system", content: systemPrompt }, { role: "user", content: userMessage }],
+        enable_thinking: false,
+        stream: true,
+      }),
+    },
+  );
+  if (!res.ok) throw new Error(`DashScope API error: ${res.status} — ${await res.text()}`);
+
+  const reader = res.body!.getReader();
+  const decoder = new TextDecoder();
+  let fullText = "";
+  let buf = "";
+  const SEP_LEN = sep.length;
+  let safeSent = 0;
+  let sepFound = false;
+  let jsonMode = false;
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buf += decoder.decode(value, { stream: true });
+    const lines = buf.split("\n");
+    buf = lines.pop() ?? "";
+    for (const line of lines) {
+      if (!line.startsWith("data: ")) continue;
+      const payload = line.slice(6).trim();
+      if (payload === "[DONE]") continue;
+      try {
+        const chunk = (JSON.parse(payload) as { choices?: Array<{ delta?: { content?: string } }> })
+          .choices?.[0]?.delta?.content ?? "";
+        if (!chunk) continue;
+        fullText += chunk;
+
+        if (SEP_LEN === 0) { onToken(chunk); continue; }
+
+        // Detect JSON-mode (LLM ignored separator format, output {"answer":...} instead)
+        if (!jsonMode && safeSent === 0 && fullText.trimStart().startsWith("{")) {
+          jsonMode = true;
+        }
+        if (jsonMode || sepFound) continue;
+
+        const searchFrom = Math.max(0, safeSent - (SEP_LEN - 1));
+        const sepIdx = fullText.indexOf(sep, searchFrom);
+        if (sepIdx !== -1) {
+          const toSend = fullText.slice(safeSent, sepIdx);
+          if (toSend) onToken(toSend);
+          safeSent = sepIdx;
+          sepFound = true;
+        } else {
+          // Keep SEP_LEN-1 chars buffered to handle separator split across tokens
+          const safeEnd = Math.max(safeSent, fullText.length - (SEP_LEN - 1));
+          if (safeEnd > safeSent) {
+            onToken(fullText.slice(safeSent, safeEnd));
+            safeSent = safeEnd;
+          }
+        }
+      } catch { /* skip */ }
+    }
+  }
+
+  // Flush remaining answer text when no separator in output
+  if (!sepFound && !jsonMode && safeSent < fullText.length) {
+    const remaining = fullText.slice(safeSent);
+    if (remaining) onToken(remaining);
+  }
+
+  // JSON mode: extract answer from JSON object and send as single token
+  if (jsonMode) {
+    try {
+      const parsed = extractJSON(fullText) as { answer?: string };
+      if (parsed.answer) onToken(parsed.answer);
+    } catch {
+      onToken(fullText.trim());
+    }
+  }
+
+  return fullText;
 }
 
 async function callDashScope(systemPrompt: string, userMessage: string, apiKey: string): Promise<string> {
@@ -285,20 +378,33 @@ export async function POST(
     ));
 
   } else if (effectiveIntent === "speaker") {
-    // Transcript chunks filtered by speaker — no distance threshold, no summary
+    // All summary chunks + transcript chunks filtered by speaker (cross-meeting coverage)
     const speakerPattern = validSpeakers.map(escapeRegex).join("|");
-    transcriptResultsPerVec = await Promise.all(allVecStrs.map(vecStr =>
-      prisma.$queryRaw<ChunkRow[]>`
-        SELECT id, meeting_id, chunk_type, section_title, speaker, meeting_date, search_text
-        FROM "Chunk"
-        WHERE project_id = ${projectId}
-          AND chunk_type = 'transcript'
-          AND embedding IS NOT NULL
-          AND speaker ~* ${speakerPattern}
-        ORDER BY embedding <=> ${vecStr}::vector
-        LIMIT 10
-      `
-    ));
+    [summaryResultsPerVec, transcriptResultsPerVec] = await Promise.all([
+      Promise.all(allVecStrs.map(vecStr =>
+        prisma.$queryRaw<ChunkRow[]>`
+          SELECT id, meeting_id, chunk_type, section_title, speaker, meeting_date, search_text
+          FROM "Chunk"
+          WHERE project_id = ${projectId}
+            AND chunk_type = 'summary'
+            AND embedding IS NOT NULL
+          ORDER BY embedding <=> ${vecStr}::vector
+          LIMIT 12
+        `
+      )),
+      Promise.all(allVecStrs.map(vecStr =>
+        prisma.$queryRaw<ChunkRow[]>`
+          SELECT id, meeting_id, chunk_type, section_title, speaker, meeting_date, search_text
+          FROM "Chunk"
+          WHERE project_id = ${projectId}
+            AND chunk_type = 'transcript'
+            AND embedding IS NOT NULL
+            AND speaker ~* ${speakerPattern}
+          ORDER BY embedding <=> ${vecStr}::vector
+          LIMIT 8
+        `
+      )),
+    ]);
 
   } else if (effectiveIntent === "date" || (effectiveIntent === "meeting" && resolvedDate)) {
     // Summary + transcript filtered by resolved date (non-null guaranteed here)
@@ -418,12 +524,13 @@ export async function POST(
 
   const retrievalMs = Date.now() - tRetrieval;
 
+  const mergedLimit = effectiveIntent === "speaker" ? 15 : 8;
   const merged = rrfMerge([
     ...summaryResultsPerVec,
     ...transcriptResultsPerVec,
     bm25Hits,
     ilikeHits,
-  ]).slice(0, 8);
+  ]).slice(0, mergedLimit);
 
   const projectDoc = project.document ? decryptJSON(project.document) : null;
 
@@ -440,40 +547,7 @@ export async function POST(
 
   const userMessage = `${contextParts.join("\n\n===\n\n")}\n\n问题：${question}`;
 
-  const tAnswer = Date.now();
-  let raw_answer: string;
-  try {
-    raw_answer = await callDashScope(ASK_SYSTEM_PROMPT, userMessage, apiKey);
-  } catch (e) {
-    return NextResponse.json({ error: String(e) }, { status: 502 });
-  }
-  const answerMs = Date.now() - tAnswer;
-
-  let parsed: { answer?: string; sources?: Array<{ chunk_type?: string; section_title?: string | null; speaker?: string | null; meeting_date?: string | null }> } = {};
-  try {
-    parsed = extractJSON(raw_answer) as typeof parsed;
-  } catch {
-    return NextResponse.json({ error: "Failed to parse model response", raw: raw_answer }, { status: 502 });
-  }
-
-  const llmSources = Array.isArray(parsed.sources) ? parsed.sources : [];
-  const sources = llmSources.map((s) => {
-    if (s.chunk_type === "project_document") {
-      return { meeting_id: null, chunk_type: "project_document", section_title: s.section_title ?? null, speaker: null, meeting_date: null };
-    }
-    const match = merged.find((c) =>
-      c.meeting_date === s.meeting_date &&
-      (c.section_title === s.section_title || c.speaker === s.speaker)
-    );
-    return {
-      meeting_id: match?.meeting_id ?? null,
-      chunk_type: s.chunk_type ?? "summary",
-      section_title: s.section_title ?? null,
-      speaker: s.speaker ?? null,
-      meeting_date: s.meeting_date ?? null,
-    };
-  });
-
+  // Pre-fetch stats before streaming starts (used in _debug)
   const [totalChunksRes, embeddedChunksRes] = await Promise.all([
     prisma.$queryRaw<[{ count: bigint }]>`SELECT COUNT(*)::int AS count FROM "Chunk" WHERE project_id = ${projectId}`,
     prisma.$queryRaw<[{ count: bigint }]>`SELECT COUNT(*)::int AS count FROM "Chunk" WHERE project_id = ${projectId} AND embedding IS NOT NULL`,
@@ -497,48 +571,102 @@ export async function POST(
     try { return decryptJSON<Record<string, unknown>>(log.context); } catch { return log.context; }
   });
 
-  const citationCounts = { project_document: 0, summary: 0, transcript: 0 };
-  for (const s of sources) {
-    const t = s.chunk_type as keyof typeof citationCounts;
-    if (t in citationCounts) citationCounts[t]++;
-  }
+  const encoder = new TextEncoder();
+  const send = (event: string, data: unknown) =>
+    encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
 
-  const _debug = {
-    source_citation_summary: citationCounts,
-    timings_ms: {
-      analyze_llm: analyzeMs,
-      embed_original: embedOriginalMs,
-      embed_variants: embedVariantsMs,
-      retrieval: retrievalMs,
-      answer_llm: answerMs,
-      total: Date.now() - tTotal,
-    },
-    routing: {
-      intent: analysis.intent,
-      effective_intent: effectiveIntent,
-      speakers: validSpeakers,
-      date_filter: analysis.date_filter,
-      resolved_date: resolvedDate,
-    },
-    rewritten_queries: analysis.queries,
-    query_vectors_count: allVecs.length,
-    summary_hits: summaryResultsPerVec.map(r => r.length),
-    transcript_hits: transcriptResultsPerVec.map(r => r.length),
-    bm25_hits: bm25Hits.length,
-    ilike_hits: ilikeHits.length,
-    merged_count: merged.length,
-    has_project_doc: !!projectDoc,
-    chunks_total: totalChunks,
-    chunks_with_embedding: embeddedChunks,
-    recent_embed_errors: recentEmbedErrors,
-    all_retrieved_chunks: merged.map((c) => ({
-      type: c.chunk_type,
-      date: c.meeting_date,
-      speaker: c.speaker,
-      section: c.section_title,
-      text: (c.search_text ?? "").slice(0, 150),
-    })),
-  };
+  const body = new ReadableStream({
+    async start(controller) {
+      const tAnswer = Date.now();
+      let fullText = "";
+      try {
+        fullText = await callDashScopeStream(ASK_SYSTEM_PROMPT, userMessage, apiKey, (token) => {
+          controller.enqueue(send("token", { text: token }));
+        }, SOURCES_SEP);
+      } catch (e) {
+        controller.enqueue(send("error", { error: String(e) }));
+        controller.close();
+        return;
+      }
+      const answerMs = Date.now() - tAnswer;
 
-  return NextResponse.json({ answer: parsed.answer ?? raw_answer, sources, _debug });
+      // Parse sources from separator section
+      type RawSource = { chunk_type?: string; section_title?: string | null; speaker?: string | null; meeting_date?: string | null };
+      const sepIdx = fullText.indexOf(SOURCES_SEP);
+      let llmSources: RawSource[] = [];
+      if (sepIdx !== -1) {
+        try {
+          const parsed = JSON.parse(fullText.slice(sepIdx + SOURCES_SEP.length).trim());
+          llmSources = Array.isArray(parsed) ? parsed : [];
+        } catch { /* no valid sources */ }
+      }
+
+      const sources = llmSources.map((s) => {
+        if (s.chunk_type === "project_document") {
+          return { meeting_id: null, chunk_type: "project_document", section_title: s.section_title ?? null, speaker: null, meeting_date: null };
+        }
+        const match = merged.find((c) =>
+          c.meeting_date === s.meeting_date &&
+          (c.section_title === s.section_title || c.speaker === s.speaker)
+        );
+        return {
+          meeting_id: match?.meeting_id ?? null,
+          chunk_type: s.chunk_type ?? "summary",
+          section_title: s.section_title ?? null,
+          speaker: s.speaker ?? null,
+          meeting_date: s.meeting_date ?? null,
+        };
+      });
+
+      const citationCounts = { project_document: 0, summary: 0, transcript: 0 };
+      for (const s of sources) {
+        const t = s.chunk_type as keyof typeof citationCounts;
+        if (t in citationCounts) citationCounts[t]++;
+      }
+
+      const _debug = {
+        source_citation_summary: citationCounts,
+        timings_ms: {
+          analyze_llm: analyzeMs,
+          embed_original: embedOriginalMs,
+          embed_variants: embedVariantsMs,
+          retrieval: retrievalMs,
+          answer_llm: answerMs,
+          total: Date.now() - tTotal,
+        },
+        routing: {
+          intent: analysis.intent,
+          effective_intent: effectiveIntent,
+          speakers: validSpeakers,
+          date_filter: analysis.date_filter,
+          resolved_date: resolvedDate,
+        },
+        rewritten_queries: analysis.queries,
+        query_vectors_count: allVecs.length,
+        summary_hits: summaryResultsPerVec.map(r => r.length),
+        transcript_hits: transcriptResultsPerVec.map(r => r.length),
+        bm25_hits: bm25Hits.length,
+        ilike_hits: ilikeHits.length,
+        merged_count: merged.length,
+        has_project_doc: !!projectDoc,
+        chunks_total: totalChunks,
+        chunks_with_embedding: embeddedChunks,
+        recent_embed_errors: recentEmbedErrors,
+        all_retrieved_chunks: merged.map((c) => ({
+          type: c.chunk_type,
+          date: c.meeting_date,
+          speaker: c.speaker,
+          section: c.section_title,
+          text: (c.search_text ?? "").slice(0, 150),
+        })),
+      };
+
+      controller.enqueue(send("done", { sources, _debug }));
+      controller.close();
+    },
+  });
+
+  return new Response(body, {
+    headers: { "Content-Type": "text/event-stream", "Cache-Control": "no-cache", "Connection": "keep-alive" },
+  });
 }
