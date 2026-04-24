@@ -39,13 +39,13 @@ export type ProjectMemory = {
   goals: string[];
   members: Array<{ name: string; role: string }>;
   milestones: Array<{ date: string | null; title: string; status: "done" | "pending" }>;
-  current_progress: { summary: string; as_of: string } | null;
+  current_progress: Array<{ summary: string; as_of: string }> | null;
   key_decisions: Array<{ date: string | null; decision: string; rationale: string | null }>;
-  open_issues: Array<{ issue: string; owner: string | null }>;
+  open_issues: Array<{ issue: string; owner: string | null; opened_at: string | null; resolved_at: string | null }>;
   risks: Array<{ risk: string; mitigation: string | null }>;
   glossary: Array<{ term: string; definition: string }>;
   checklist: Array<{ item: string; status: "done" | "pending" }>;
-  next_meeting_goals: string | null;
+  next_meeting_goals: Array<{ goal: string; set_at: string | null; completed_at: string | null }> | null;
   [key: string]: unknown;
 };
 

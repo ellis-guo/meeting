@@ -304,6 +304,7 @@ export default function MeetingFlow({ projectId, projectDocument, onDiffConfirme
               highlightedLines={highlightedLines}
               projectId={projectId!}
               projectDocument={projectDocument!}
+              meetingDate={dateInput || new Date().toISOString().slice(0, 10)}
               onConfirmed={onDiffConfirmed ?? (() => {})}
             />
           ) : (

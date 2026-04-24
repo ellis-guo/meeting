@@ -30,12 +30,30 @@ const FIELD_ORDER = [
   "key_decisions", "open_issues", "risks", "glossary", "checklist", "next_meeting_goals",
 ];
 
-function renderItem(item: unknown): { icon: string | null; text: string } {
+function renderItem(item: unknown): { icon: string | null; text: string; strikethrough?: boolean; meta?: string } {
   if (typeof item === "string") return { icon: null, text: item };
   if (typeof item !== "object" || item === null) return { icon: null, text: String(item) };
   const o = item as Record<string, unknown>;
   if ("decision" in o) return { icon: null, text: `${o.date ? `[${o.date}] ` : ""}${o.decision}${o.rationale ? ` — ${o.rationale}` : ""}` };
-  if ("issue" in o) return { icon: null, text: `${o.issue}${o.owner ? ` (${o.owner})` : ""}` };
+  if ("issue" in o) {
+    const resolved = o.resolved_at as string | null;
+    return {
+      icon: resolved ? "✓" : "○",
+      text: `${o.issue}${o.owner ? ` (${o.owner})` : ""}`,
+      strikethrough: !!resolved,
+      meta: resolved ? `已解决 ${resolved}` : (o.opened_at ? `${o.opened_at}` : undefined),
+    };
+  }
+  if ("goal" in o) {
+    const completed = o.completed_at as string | null;
+    return {
+      icon: completed ? "✓" : "○",
+      text: String(o.goal),
+      strikethrough: !!completed,
+      meta: completed ? `已完成 ${completed}` : (o.set_at ? `${o.set_at}` : undefined),
+    };
+  }
+  if ("summary" in o) return { icon: null, text: String(o.summary), meta: o.as_of ? `截至 ${o.as_of}` : undefined };
   if ("risk" in o) return { icon: null, text: `${o.risk}${o.mitigation ? ` → ${o.mitigation}` : ""}` };
   if ("name" in o && "role" in o) return { icon: null, text: `${o.name} — ${o.role}` };
   if ("term" in o) return { icon: null, text: `${o.term}: ${o.definition}` };
@@ -48,34 +66,47 @@ function FieldValue({ fieldKey, value }: { fieldKey: string; value: unknown }) {
   if (value === null || value === undefined)
     return <span className="text-gray-400 dark:text-gray-500 italic text-sm">（空）</span>;
 
-  if (fieldKey === "current_progress" && typeof value === "object" && !Array.isArray(value)) {
-    const p = value as Record<string, unknown>;
-    const summaryText = (p.summary ?? p.status ?? p.description ?? null) as string | null;
-    if (summaryText) {
-      return (
-        <p className="text-sm text-gray-700 dark:text-gray-300">
-          {summaryText}{" "}
-          {p.as_of && <span className="text-gray-400 dark:text-gray-500 text-xs">截至 {p.as_of as string}</span>}
-        </p>
-      );
-    }
-    return <p className="text-sm font-mono text-gray-500 dark:text-gray-400">{JSON.stringify(value)}</p>;
-  }
-
   if (typeof value === "string")
     return <p className="text-sm text-gray-700 dark:text-gray-300">{value}</p>;
 
   if (Array.isArray(value)) {
     if (value.length === 0)
       return <span className="text-gray-400 dark:text-gray-500 italic text-sm">（空）</span>;
+
+    // current_progress: show latest prominently, rest as history
+    if (fieldKey === "current_progress") {
+      const entries = value as Array<{ summary: string; as_of: string }>;
+      const latest = entries[entries.length - 1];
+      const history = entries.slice(0, -1).reverse();
+      return (
+        <div className="space-y-1">
+          <p className="text-sm text-gray-700 dark:text-gray-300">
+            {latest.summary}{" "}
+            <span className="text-gray-400 dark:text-gray-500 text-xs">截至 {latest.as_of}</span>
+          </p>
+          {history.length > 0 && (
+            <details className="text-xs text-gray-400 dark:text-gray-500">
+              <summary className="cursor-pointer hover:text-gray-600 dark:hover:text-gray-400">历史记录 ({history.length})</summary>
+              <ul className="mt-1 space-y-0.5 pl-2 border-l border-gray-200 dark:border-zinc-700">
+                {history.map((e, i) => (
+                  <li key={i}>{e.summary} <span className="opacity-60">截至 {e.as_of}</span></li>
+                ))}
+              </ul>
+            </details>
+          )}
+        </div>
+      );
+    }
+
     return (
       <ul className="space-y-1">
         {value.map((item, i) => {
           const rendered = renderItem(item);
           return (
-            <li key={i} className="flex gap-2 text-sm text-gray-700 dark:text-gray-300">
+            <li key={i} className={`flex gap-2 text-sm ${rendered.strikethrough ? "text-gray-400 dark:text-gray-600" : "text-gray-700 dark:text-gray-300"}`}>
               <span className="text-gray-400 dark:text-gray-500 shrink-0">{rendered.icon ?? "•"}</span>
-              <span>{rendered.text}</span>
+              <span className={rendered.strikethrough ? "line-through" : ""}>{rendered.text}</span>
+              {rendered.meta && <span className="text-xs text-gray-400 dark:text-gray-500 shrink-0 self-center">{rendered.meta}</span>}
             </li>
           );
         })}
@@ -168,11 +199,9 @@ export default function ProjectMemoryPanel({ projectId, memory, onUpdated, initi
     }
   };
 
-  const progressLabel = memory.current_progress &&
-    typeof memory.current_progress === "object" &&
-    "summary" in (memory.current_progress as object)
-      ? `— ${(memory.current_progress as { summary: string }).summary}`
-      : null;
+  const progressLabel = Array.isArray(memory.current_progress) && memory.current_progress.length > 0
+    ? `— ${memory.current_progress[memory.current_progress.length - 1].summary}`
+    : null;
 
   const keys = sortedKeys(memory);
 

@@ -29,7 +29,7 @@ export async function PATCH(
   const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
   for (const decision of newDecisions.slice(oldDecisions.length)) {
     const d = (decision as Record<string, unknown>).date;
-    if (d !== null && (typeof d !== "string" || !dateRegex.test(d))) {
+    if (d !== null && d !== undefined && (typeof d !== "string" || !dateRegex.test(d))) {
       return NextResponse.json(
         { error: `key_decisions entry date must be YYYY-MM-DD, got: ${d}` },
         { status: 400 },

@@ -219,6 +219,7 @@ export default function MeetingDetailPage() {
               highlightedLines={highlightedLines}
               projectId={projectId}
               projectDocument={projectDocument}
+              meetingDate={summary.meta.date ?? new Date().toISOString().slice(0, 10)}
               onConfirmed={() => setShowDiffPanel(false)}
             />
           ) : (
