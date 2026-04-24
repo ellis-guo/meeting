@@ -19,7 +19,7 @@ type AskSource = {
 type CitationResolver = (date: string, section: string) => string | null;
 
 function renderInline(text: string, resolve?: CitationResolver): React.ReactNode {
-  const parts = text.split(/(\*\*[^*]+\*\*|\[\d{4}-\d{2}-\d{2}\s*·[^\]]+\])/g);
+  const parts = text.split(/(\*\*[^*]+\*\*|\[\d{4}-\d{2}-\d{2}\s*·[^\]]+\]|\[[^\]]+·[^\]]+\])/g);
   return parts.map((part, i) => {
     if (part.startsWith("**") && part.endsWith("**")) {
       return <strong key={i}>{part.slice(2, -2)}</strong>;
@@ -32,17 +32,32 @@ function renderInline(text: string, resolve?: CitationResolver): React.ReactNode
           ? <a key={i} href={href} target="_blank" rel="noopener noreferrer" className="underline decoration-gray-400 dark:decoration-gray-600 text-gray-500 dark:text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 transition-colors text-xs">{part}</a>
           : <span key={i} className="text-gray-400 dark:text-gray-500 text-xs">{part}</span>;
       }
+      // Non-date citation like [project_document · field] — render as muted label
+      if (/^\[[^\]]+·[^\]]+\]$/.test(part)) {
+        return <span key={i} className="text-gray-400 dark:text-gray-500 text-xs">{part}</span>;
+      }
     }
     return part;
   });
 }
 
 function renderAnswer(text: string, resolve?: CitationResolver): React.ReactNode {
-  const lines = text.split("\n");
+  // Merge bare bullet markers (lines that are just "•" or "*") with the following line
+  const rawLines = text.split("\n");
+  const lines: string[] = [];
+  for (let i = 0; i < rawLines.length; i++) {
+    if (/^[•*]\s*$/.test(rawLines[i]) && i + 1 < rawLines.length && rawLines[i + 1].trim() !== "") {
+      lines.push(`* ${rawLines[i + 1].trim()}`);
+      i++;
+    } else {
+      lines.push(rawLines[i]);
+    }
+  }
+
   return lines.map((line, i) => {
     const h2 = line.match(/^##\s+(.+)/);
     const h3 = line.match(/^###\s+(.+)/);
-    const bullet = line.match(/^\*\s+(.+)/);
+    const bullet = line.match(/^[*•]\s+(.+)/);
     if (h2) return <p key={i} className="text-base font-semibold text-gray-900 dark:text-gray-50 mt-4 mb-0.5">{renderInline(h2[1], resolve)}</p>;
     if (h3) return <p key={i} className="font-medium text-gray-800 dark:text-gray-100 mt-3 mb-0.5">{renderInline(h3[1], resolve)}</p>;
     if (bullet) return <p key={i} className="flex gap-2 pl-2"><span className="shrink-0 text-gray-400">•</span><span>{renderInline(bullet[1], resolve)}</span></p>;
@@ -56,14 +71,29 @@ function ProjectAskPanel({ projectId }: { projectId: string }) {
   const [asking, setAsking] = useState(false);
   const [rawText, setRawText] = useState<string | null>(null);
   const [sources, setSources] = useState<AskSource[]>([]);
+  const [debug, setDebug] = useState<unknown>(null);
   const [error, setError] = useState<string | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  const handleDownloadDebug = () => {
+    if (!debug) return;
+    const ts = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 23);
+    const q = question.trim().slice(0, 10).replace(/[\\/:*?"<>|]/g, "_");
+    const blob = new Blob([JSON.stringify(debug, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `debug_${ts}_${q}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
 
   const handleAsk = async () => {
     if (!question.trim() || asking) return;
     setAsking(true);
     setRawText(null);
     setSources([]);
+    setDebug(null);
     setError(null);
     try {
       const res = await fetch(`/api/projects/${projectId}/ask`, {
@@ -98,6 +128,7 @@ function ProjectAskPanel({ projectId }: { projectId: string }) {
               setRawText((prev) => (prev ?? "") + ((data.text as string) ?? ""));
             } else if (event === "done") {
               setSources(Array.isArray(data.sources) ? (data.sources as AskSource[]) : []);
+              if (data._debug !== undefined) setDebug(data._debug);
             } else if (event === "error") {
               setError((data.error as string) ?? "请求失败");
             }
@@ -163,6 +194,16 @@ function ProjectAskPanel({ projectId }: { projectId: string }) {
                 <span className="inline-block w-0.5 h-3.5 ml-0.5 bg-blue-500 animate-pulse align-middle" />
               )}
             </div>
+            {!asking && debug && (
+              <div className="flex justify-end mt-2">
+                <button
+                  onClick={handleDownloadDebug}
+                  className="text-xs text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
+                >
+                  ↓ 下载 Debug
+                </button>
+              </div>
+            )}
           </div>
         )}
       </div>
