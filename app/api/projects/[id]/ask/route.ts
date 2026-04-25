@@ -1,4 +1,4 @@
-import { NextRequest } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@clerk/nextjs/server";
 import { prisma } from "@/lib/prisma";
 import { decryptJSON } from "@/lib/crypto";
@@ -161,6 +161,7 @@ type QueryAnalysis = {
   intent: "project" | "speaker" | "date" | "meeting" | "general";
   speakers: string[];
   date_filter: string | null;
+  meeting_count: number;
 };
 
 const ANALYZE_SYSTEM_PROMPT = `你是查询分析助手。分析关于项目会议记录的问题，同时完成两件事：
@@ -171,26 +172,28 @@ const ANALYZE_SYSTEM_PROMPT = `你是查询分析助手。分析关于项目会�
 - project：宏观项目问题（目标/成员/背景/整体进度），主文档和摘要已足够回答
 - speaker：询问某个或某几个特定人物的发言、观点或行动
 - date：问题中出现了具体日期（如"4月15日"、"上周三"），提取为 YYYY-MM-DD
-- meeting：询问某次会议内容（含"上次/最近会议"），无具体日期
+- meeting：询问某次或多次会议内容（含"上次/最近/最近几次会议"），无具体日期
 - general：跨会议综合问题、具体细节查询、或以上均不适合
 
 字段说明：
 - speakers：提取到的人物姓名数组，仅 intent=speaker 时填写，其余填 []；最多2个
 - date_filter：intent=date 时填 YYYY-MM-DD，intent=meeting 且含"上次/最近"时填 "latest"，其余填 null
+- meeting_count：intent=meeting 时，问题涉及的会议数量（"上次"=1，"最近两次"=2，"最近几次"=3，不确定=1）；其余 intent 填 1
 
 仅输出合法 JSON：
 {
   "queries": ["改写版本1", "改写版本2"],
   "intent": "project | speaker | date | meeting | general",
   "speakers": [],
-  "date_filter": null
+  "date_filter": null,
+  "meeting_count": 1
 }`;
 
-const ANALYZE_FALLBACK: QueryAnalysis = { queries: [], intent: "general", speakers: [], date_filter: null };
+const ANALYZE_FALLBACK: QueryAnalysis = { queries: [], intent: "general", speakers: [], date_filter: null, meeting_count: 1 };
 
-async function analyzeQuery(question: string, apiKey: string): Promise<QueryAnalysis> {
+async function analyzeQuery(question: string, apiKey: string, today: string): Promise<QueryAnalysis> {
   try {
-    const raw = await callDashScope(ANALYZE_SYSTEM_PROMPT, `问题：${question}`, apiKey);
+    const raw = await callDashScope(ANALYZE_SYSTEM_PROMPT, `当前日期：${today}\n问题：${question}`, apiKey);
     const parsed = extractJSON(raw) as Record<string, unknown>;
     const intent = (["project", "speaker", "date", "meeting", "general"] as const)
       .find(i => i === parsed.intent) ?? "general";
@@ -201,7 +204,10 @@ async function analyzeQuery(question: string, apiKey: string): Promise<QueryAnal
       ? (parsed.speakers as unknown[]).filter((s): s is string => typeof s === "string" && s.trim().length > 0).slice(0, 2)
       : [];
     const date_filter = typeof parsed.date_filter === "string" ? parsed.date_filter : null;
-    return { queries, intent, speakers, date_filter };
+    const meeting_count = typeof parsed.meeting_count === "number" && parsed.meeting_count >= 1
+      ? Math.min(Math.round(parsed.meeting_count), 5)
+      : 1;
+    return { queries, intent, speakers, date_filter, meeting_count };
   } catch {
     return ANALYZE_FALLBACK;
   }
@@ -239,9 +245,18 @@ type ChunkRow = {
   speaker: string | null;
   meeting_date: string | null;
   search_text: string | null;
+  parent_id: string | null;
 };
 
-function rrfMerge(lists: ChunkRow[][], k = 60): ChunkRow[] {
+type ParentRow = {
+  id: string;
+  meeting_id: string;
+  meeting_date: string | null;
+  content: string;
+  speakers: string;
+};
+
+function rrfMerge(lists: ChunkRow[][], k = 60): { chunks: ChunkRow[]; scores: Map<string, number> } {
   const scores = new Map<string, number>();
   for (const list of lists) {
     list.forEach((chunk, rank) => {
@@ -249,7 +264,7 @@ function rrfMerge(lists: ChunkRow[][], k = 60): ChunkRow[] {
     });
   }
   const seen = new Set<string>();
-  return lists
+  const chunks = lists
     .flat()
     .filter((c) => {
       if (seen.has(c.id)) return false;
@@ -257,6 +272,20 @@ function rrfMerge(lists: ChunkRow[][], k = 60): ChunkRow[] {
       return true;
     })
     .sort((a, b) => (scores.get(b.id) ?? 0) - (scores.get(a.id) ?? 0));
+  return { chunks, scores };
+}
+
+function cliffCutoff(chunks: ChunkRow[], scores: Map<string, number>, cap: number, extraAfterCliff = 2, minKeep = 3): ChunkRow[] {
+  const capped = chunks.slice(0, cap);
+  if (capped.length <= minKeep) return capped;
+  let maxDrop = 0;
+  let cliffIdx = capped.length - 1;
+  for (let i = 0; i < capped.length - 1; i++) {
+    const drop = (scores.get(capped[i].id) ?? 0) - (scores.get(capped[i + 1].id) ?? 0);
+    if (drop > maxDrop) { maxDrop = drop; cliffIdx = i; }
+  }
+  const cutoff = Math.min(capped.length, Math.max(minKeep, cliffIdx + 1 + extraAfterCliff));
+  return capped.slice(0, cutoff);
 }
 
 const ZH_STOP = new Set("了的地得是在有和与或不对于关于什么哪里哪谁如何怎么为什么吗呢啊呀吧嗯".split(""));
@@ -314,6 +343,7 @@ export async function POST(
   }
 
   const tTotal = Date.now();
+  const today = new Date().toISOString().slice(0, 10);
 
   // Phase 1: analyze query (rewrite + intent + entities) + embed original — parallel
   let queryVec: number[];
@@ -321,16 +351,16 @@ export async function POST(
   let analyzeMs = 0, embedOriginalMs = 0;
   try {
     [[analysis, analyzeMs], [queryVec, embedOriginalMs]] = await Promise.all([
-      (async () => { const t = Date.now(); const r = await analyzeQuery(question, apiKey); return [r, Date.now() - t] as [QueryAnalysis, number]; })(),
+      (async () => { const t = Date.now(); const r = await analyzeQuery(question, apiKey, today); return [r, Date.now() - t] as [QueryAnalysis, number]; })(),
       (async () => { const t = Date.now(); const r = await fetchEmbedding(question, apiKey); return [r, Date.now() - t] as [number[], number]; })(),
     ]);
   } catch (e) {
     return NextResponse.json({ error: String(e) }, { status: 502 });
   }
 
-  // Phase 2: embed rewrite variants + resolve date — parallel
+  // Phase 2: embed rewrite variants + resolve date + date meeting count — parallel
   const tPhase2 = Date.now();
-  const [variantVecs, resolvedDate] = await Promise.all([
+  const [variantVecs, resolvedDate, dateMeetingCount] = await Promise.all([
     Promise.all(analysis.queries.map(q => fetchEmbedding(q, apiKey).catch(() => null))),
     analysis.date_filter === "latest"
       ? prisma.$queryRaw<[{ d: string | null }]>`
@@ -341,6 +371,12 @@ export async function POST(
             ? analysis.date_filter
             : null
         ),
+    analysis.intent === "date" && analysis.date_filter && /^\d{4}-\d{2}-\d{2}$/.test(analysis.date_filter)
+      ? prisma.$queryRaw<[{ cnt: bigint }]>`
+          SELECT COUNT(DISTINCT meeting_id)::int AS cnt FROM "Chunk"
+          WHERE project_id = ${projectId} AND meeting_date = ${analysis.date_filter}
+        `.then(r => Number(r[0]?.cnt ?? 1))
+      : Promise.resolve(1),
   ]);
   const embedVariantsMs = Date.now() - tPhase2;
 
@@ -357,6 +393,19 @@ export async function POST(
     : analysis.intent === "date" && !resolvedDate ? "general"
     : analysis.intent;
 
+  // Dynamic candidate cap per intent
+  const BASE = 8;
+  const candidateCap =
+    effectiveIntent === "project" ? BASE :
+    effectiveIntent === "speaker" ? Math.min(BASE * Math.max(validSpeakers.length, 1), 24) :
+    effectiveIntent === "date" ? Math.min(BASE * Math.max(dateMeetingCount, 1), 24) :
+    effectiveIntent === "meeting" ? Math.min(BASE * Math.max(analysis.meeting_count, 1), 24) :
+    12; // general
+
+  // Dynamic SQL LIMIT per vector (scales with candidateCap, must be after candidateCap)
+  const summaryLimitPerVec = Math.max(4, Math.ceil(candidateCap / 2));
+  const transcriptLimitPerVec = Math.max(8, candidateCap);
+
   let summaryResultsPerVec: ChunkRow[][] = [];
   let transcriptResultsPerVec: ChunkRow[][] = [];
   let bm25Hits: ChunkRow[] = [];
@@ -366,14 +415,14 @@ export async function POST(
     // Project doc (always in context) + summary chunks only
     summaryResultsPerVec = await Promise.all(allVecStrs.map(vecStr =>
       prisma.$queryRaw<ChunkRow[]>`
-        SELECT id, meeting_id, chunk_type, section_title, speaker, meeting_date, search_text
+        SELECT id, meeting_id, chunk_type, section_title, speaker, meeting_date, search_text, parent_id
         FROM "Chunk"
         WHERE project_id = ${projectId}
           AND chunk_type = 'summary'
           AND embedding IS NOT NULL
           AND embedding <=> ${vecStr}::vector < 0.5
         ORDER BY embedding <=> ${vecStr}::vector
-        LIMIT 5
+        LIMIT ${summaryLimitPerVec}
       `
     ));
 
@@ -383,25 +432,25 @@ export async function POST(
     [summaryResultsPerVec, transcriptResultsPerVec] = await Promise.all([
       Promise.all(allVecStrs.map(vecStr =>
         prisma.$queryRaw<ChunkRow[]>`
-          SELECT id, meeting_id, chunk_type, section_title, speaker, meeting_date, search_text
+          SELECT id, meeting_id, chunk_type, section_title, speaker, meeting_date, search_text, parent_id
           FROM "Chunk"
           WHERE project_id = ${projectId}
             AND chunk_type = 'summary'
             AND embedding IS NOT NULL
           ORDER BY embedding <=> ${vecStr}::vector
-          LIMIT 12
+          LIMIT ${summaryLimitPerVec}
         `
       )),
       Promise.all(allVecStrs.map(vecStr =>
         prisma.$queryRaw<ChunkRow[]>`
-          SELECT id, meeting_id, chunk_type, section_title, speaker, meeting_date, search_text
+          SELECT id, meeting_id, chunk_type, section_title, speaker, meeting_date, search_text, parent_id
           FROM "Chunk"
           WHERE project_id = ${projectId}
             AND chunk_type = 'transcript'
             AND embedding IS NOT NULL
             AND speaker ~* ${speakerPattern}
           ORDER BY embedding <=> ${vecStr}::vector
-          LIMIT 8
+          LIMIT ${transcriptLimitPerVec}
         `
       )),
     ]);
@@ -411,7 +460,7 @@ export async function POST(
     [summaryResultsPerVec, transcriptResultsPerVec] = await Promise.all([
       Promise.all(allVecStrs.map(vecStr =>
         prisma.$queryRaw<ChunkRow[]>`
-          SELECT id, meeting_id, chunk_type, section_title, speaker, meeting_date, search_text
+          SELECT id, meeting_id, chunk_type, section_title, speaker, meeting_date, search_text, parent_id
           FROM "Chunk"
           WHERE project_id = ${projectId}
             AND chunk_type = 'summary'
@@ -419,12 +468,12 @@ export async function POST(
             AND embedding IS NOT NULL
             AND embedding <=> ${vecStr}::vector < 0.5
           ORDER BY embedding <=> ${vecStr}::vector
-          LIMIT 5
+          LIMIT ${summaryLimitPerVec}
         `
       )),
       Promise.all(allVecStrs.map(vecStr =>
         prisma.$queryRaw<ChunkRow[]>`
-          SELECT id, meeting_id, chunk_type, section_title, speaker, meeting_date, search_text
+          SELECT id, meeting_id, chunk_type, section_title, speaker, meeting_date, search_text, parent_id
           FROM "Chunk"
           WHERE project_id = ${projectId}
             AND chunk_type = 'transcript'
@@ -432,7 +481,7 @@ export async function POST(
             AND embedding IS NOT NULL
             AND embedding <=> ${vecStr}::vector < 0.5
           ORDER BY embedding <=> ${vecStr}::vector
-          LIMIT 10
+          LIMIT ${transcriptLimitPerVec}
         `
       )),
     ]);
@@ -442,26 +491,26 @@ export async function POST(
     [summaryResultsPerVec, transcriptResultsPerVec] = await Promise.all([
       Promise.all(allVecStrs.map(vecStr =>
         prisma.$queryRaw<ChunkRow[]>`
-          SELECT id, meeting_id, chunk_type, section_title, speaker, meeting_date, search_text
+          SELECT id, meeting_id, chunk_type, section_title, speaker, meeting_date, search_text, parent_id
           FROM "Chunk"
           WHERE project_id = ${projectId}
             AND chunk_type = 'summary'
             AND embedding IS NOT NULL
             AND embedding <=> ${vecStr}::vector < 0.5
           ORDER BY embedding <=> ${vecStr}::vector
-          LIMIT 5
+          LIMIT ${summaryLimitPerVec}
         `
       )),
       Promise.all(allVecStrs.map(vecStr =>
         prisma.$queryRaw<ChunkRow[]>`
-          SELECT id, meeting_id, chunk_type, section_title, speaker, meeting_date, search_text
+          SELECT id, meeting_id, chunk_type, section_title, speaker, meeting_date, search_text, parent_id
           FROM "Chunk"
           WHERE project_id = ${projectId}
             AND chunk_type = 'transcript'
             AND embedding IS NOT NULL
             AND embedding <=> ${vecStr}::vector < 0.5
           ORDER BY embedding <=> ${vecStr}::vector
-          LIMIT 10
+          LIMIT ${transcriptLimitPerVec}
         `
       )),
     ]);
@@ -474,30 +523,30 @@ export async function POST(
     [summaryResultsPerVec, transcriptResultsPerVec, bm25Hits, ilikeHits] = await Promise.all([
       Promise.all(allVecStrs.map(vecStr =>
         prisma.$queryRaw<ChunkRow[]>`
-          SELECT id, meeting_id, chunk_type, section_title, speaker, meeting_date, search_text
+          SELECT id, meeting_id, chunk_type, section_title, speaker, meeting_date, search_text, parent_id
           FROM "Chunk"
           WHERE project_id = ${projectId}
             AND chunk_type = 'summary'
             AND embedding IS NOT NULL
             AND embedding <=> ${vecStr}::vector < 0.5
           ORDER BY embedding <=> ${vecStr}::vector
-          LIMIT 5
+          LIMIT ${summaryLimitPerVec}
         `
       )),
       Promise.all(allVecStrs.map(vecStr =>
         prisma.$queryRaw<ChunkRow[]>`
-          SELECT id, meeting_id, chunk_type, section_title, speaker, meeting_date, search_text
+          SELECT id, meeting_id, chunk_type, section_title, speaker, meeting_date, search_text, parent_id
           FROM "Chunk"
           WHERE project_id = ${projectId}
             AND chunk_type = 'transcript'
             AND embedding IS NOT NULL
             AND embedding <=> ${vecStr}::vector < 0.5
           ORDER BY embedding <=> ${vecStr}::vector
-          LIMIT 10
+          LIMIT ${transcriptLimitPerVec}
         `
       )),
       prisma.$queryRaw<ChunkRow[]>`
-        SELECT id, meeting_id, chunk_type, section_title, speaker, meeting_date, search_text
+        SELECT id, meeting_id, chunk_type, section_title, speaker, meeting_date, search_text, parent_id
         FROM "Chunk"
         WHERE project_id = ${projectId}
           AND search_text IS NOT NULL
@@ -511,7 +560,7 @@ export async function POST(
       `,
       keywordPattern
         ? prisma.$queryRaw<ChunkRow[]>`
-            SELECT id, meeting_id, chunk_type, section_title, speaker, meeting_date, search_text
+            SELECT id, meeting_id, chunk_type, section_title, speaker, meeting_date, search_text, parent_id
             FROM "Chunk"
             WHERE project_id = ${projectId}
               AND search_text IS NOT NULL
@@ -524,13 +573,42 @@ export async function POST(
 
   const retrievalMs = Date.now() - tRetrieval;
 
-  const mergedLimit = effectiveIntent === "speaker" ? 15 : 8;
-  const merged = rrfMerge([
+  const { chunks: rrfChunks, scores: rrfScores } = rrfMerge([
     ...summaryResultsPerVec,
     ...transcriptResultsPerVec,
     bm25Hits,
     ilikeHits,
-  ]).slice(0, mergedLimit);
+  ]);
+  const merged = cliffCutoff(rrfChunks, rrfScores, candidateCap);
+
+  // Parent-child: group transcript chunks by parent_id, fetch parents sorted by hit count
+  const parentHits = new Map<string, number>();
+  const summaryChunks: ChunkRow[] = [];
+  const noParentTranscript: ChunkRow[] = [];
+
+  for (const chunk of merged) {
+    if (chunk.chunk_type === "summary") {
+      summaryChunks.push(chunk);
+    } else if (chunk.parent_id) {
+      parentHits.set(chunk.parent_id, (parentHits.get(chunk.parent_id) ?? 0) + 1);
+    } else {
+      noParentTranscript.push(chunk);
+    }
+  }
+
+  const sortedParentIds = [...parentHits.entries()]
+    .sort(([, a], [, b]) => b - a)
+    .map(([id]) => id);
+
+  let parentRows: ParentRow[] = [];
+  if (sortedParentIds.length > 0) {
+    const idList = sortedParentIds.map(id => `'${id}'`).join(",");
+    const fetched = await prisma.$queryRawUnsafe<ParentRow[]>(
+      `SELECT id, meeting_id, meeting_date, content, speakers FROM "ChunkParent" WHERE id IN (${idList})`
+    );
+    const parentMap = new Map(fetched.map(p => [p.id, p]));
+    parentRows = sortedParentIds.map(id => parentMap.get(id)).filter((p): p is ParentRow => !!p);
+  }
 
   const projectDoc = project.document ? decryptJSON(project.document) : null;
 
@@ -538,22 +616,38 @@ export async function POST(
   if (projectDoc) {
     contextParts.push(`项目主文档：\n${JSON.stringify(projectDoc, null, 2)}`);
   }
-  if (merged.length > 0) {
-    const chunkTexts = merged.map((c) =>
-      `[${c.meeting_date ?? "日期未知"} · ${c.section_title ?? c.speaker ?? "片段"}]\n${c.search_text ?? ""}`
-    );
+
+  const chunkTexts: string[] = [];
+  for (const c of summaryChunks) {
+    chunkTexts.push(`[${c.meeting_date ?? "日期未知"} · ${c.section_title ?? "摘要"}]\n${c.search_text ?? ""}`);
+  }
+  for (const p of parentRows) {
+    chunkTexts.push(`[${p.meeting_date ?? "日期未知"} · 对话片段 (${p.speakers})]\n${p.content}`);
+  }
+  for (const c of noParentTranscript) {
+    chunkTexts.push(`[${c.meeting_date ?? "日期未知"} · ${c.speaker ?? "片段"}]\n${c.search_text ?? ""}`);
+  }
+  if (chunkTexts.length > 0) {
     contextParts.push(`会议记录片段：\n${chunkTexts.join("\n\n---\n\n")}`);
   }
 
   const userMessage = `${contextParts.join("\n\n===\n\n")}\n\n问题：${question}`;
 
   // Pre-fetch stats before streaming starts (used in _debug)
-  const [totalChunksRes, embeddedChunksRes] = await Promise.all([
+  const [totalChunksRes, embeddedChunksRes, meetingDateRows] = await Promise.all([
     prisma.$queryRaw<[{ count: bigint }]>`SELECT COUNT(*)::int AS count FROM "Chunk" WHERE project_id = ${projectId}`,
     prisma.$queryRaw<[{ count: bigint }]>`SELECT COUNT(*)::int AS count FROM "Chunk" WHERE project_id = ${projectId} AND embedding IS NOT NULL`,
+    prisma.$queryRaw<Array<{ meeting_id: string; meeting_date: string }>>`
+      SELECT DISTINCT ON (meeting_date) meeting_id, meeting_date
+      FROM "Chunk"
+      WHERE project_id = ${projectId} AND meeting_date IS NOT NULL
+      ORDER BY meeting_date
+    `,
   ]);
   const totalChunks = Number(totalChunksRes[0]?.count ?? 0);
   const embeddedChunks = Number(embeddedChunksRes[0]?.count ?? 0);
+  // meeting_date → meeting_id index for reliable source resolution
+  const meetingDateIndex = new Map(meetingDateRows.map((r) => [r.meeting_date, r.meeting_id]));
 
   const projectMeetingIds = await prisma.meeting.findMany({
     where: { project_id: projectId },
@@ -605,12 +699,9 @@ export async function POST(
         if (s.chunk_type === "project_document") {
           return { meeting_id: null, chunk_type: "project_document", section_title: s.section_title ?? null, speaker: null, meeting_date: null };
         }
-        const match = merged.find((c) =>
-          c.meeting_date === s.meeting_date &&
-          (c.section_title === s.section_title || c.speaker === s.speaker)
-        );
+        const meetingId = s.meeting_date ? (meetingDateIndex.get(s.meeting_date) ?? null) : null;
         return {
-          meeting_id: match?.meeting_id ?? null,
+          meeting_id: meetingId,
           chunk_type: s.chunk_type ?? "summary",
           section_title: s.section_title ?? null,
           speaker: s.speaker ?? null,
@@ -640,6 +731,9 @@ export async function POST(
           speakers: validSpeakers,
           date_filter: analysis.date_filter,
           resolved_date: resolvedDate,
+          meeting_count: analysis.meeting_count,
+          candidate_cap: candidateCap,
+          date_meeting_count: dateMeetingCount,
         },
         rewritten_queries: analysis.queries,
         query_vectors_count: allVecs.length,
@@ -648,6 +742,8 @@ export async function POST(
         bm25_hits: bm25Hits.length,
         ilike_hits: ilikeHits.length,
         merged_count: merged.length,
+        parent_chunks_used: parentRows.length,
+        no_parent_fallback: noParentTranscript.length,
         has_project_doc: !!projectDoc,
         chunks_total: totalChunks,
         chunks_with_embedding: embeddedChunks,
@@ -657,7 +753,15 @@ export async function POST(
           date: c.meeting_date,
           speaker: c.speaker,
           section: c.section_title,
+          parent_id: c.parent_id,
           text: (c.search_text ?? "").slice(0, 150),
+        })),
+        parent_chunks: parentRows.map(p => ({
+          id: p.id,
+          date: p.meeting_date,
+          speakers: p.speakers,
+          hits: parentHits.get(p.id) ?? 1,
+          text: p.content.slice(0, 300),
         })),
       };
 

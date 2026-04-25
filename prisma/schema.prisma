@@ -35,6 +35,20 @@ model Meeting {
   @@index([user_id])
 }
 
+model ChunkParent {
+  id           String  @id @default(uuid())
+  meeting_id   String
+  project_id   String?
+  meeting_date String?
+  content      String
+  speakers     String
+  line_start   Int?
+  line_end     Int?
+
+  @@index([meeting_id])
+  @@index([project_id])
+}
+
 model Chunk {
   id            String                       @id @default(uuid())
   meeting_id    String
@@ -48,6 +62,7 @@ model Chunk {
   meeting_date  String?
   search_text   String?
   embedding     Unsupported("vector(1024)")?
+  parent_id     String?
   meeting       Meeting                      @relation(fields: [meeting_id], references: [id])
 }
 

@@ -4,6 +4,35 @@ import { prisma } from "@/lib/prisma";
 import { decrypt, encryptJSON } from "@/lib/crypto";
 import { getDashScopeKey } from "@/lib/apiKey.server";
 
+const PARENT_WINDOW = 4;
+
+async function buildAndStoreParents(transcriptChunks: Array<ChunkInput & { id: string }>, meetingId: string): Promise<void> {
+  for (let i = 0; i < transcriptChunks.length; i += PARENT_WINDOW) {
+    const group = transcriptChunks.slice(i, i + PARENT_WINDOW);
+    const content = group.map(c => c.search_text ?? c.content).join("\n");
+    const uniqueSpeakers = [...new Set(group.flatMap(c => c.speaker ? [c.speaker] : []))];
+    const speakers = uniqueSpeakers.join(" | ") || "未知";
+    const parentId = crypto.randomUUID();
+    const projectId = group[0].project_id ?? null;
+    const meetingDate = group[0].meeting_date ?? null;
+    const lineStart = group[0].line_start ?? null;
+    const lineEnd = group[group.length - 1].line_end ?? null;
+    try {
+      await prisma.$executeRaw`
+        INSERT INTO "ChunkParent" (id, meeting_id, project_id, meeting_date, content, speakers, line_start, line_end)
+        VALUES (${parentId}, ${meetingId}, ${projectId}, ${meetingDate}, ${content}, ${speakers}, ${lineStart}, ${lineEnd})
+      `;
+      for (const chunk of group) {
+        await prisma.$executeRaw`UPDATE "Chunk" SET parent_id = ${parentId} WHERE id = ${chunk.id}`;
+      }
+    } catch (e) {
+      await prisma.processingLog.create({
+        data: { level: "error", meeting_id: meetingId, context: encryptJSON({ type: "parent_creation_failed", window_start: i, detail: String(e) }) },
+      });
+    }
+  }
+}
+
 type ChunkInput = {
   meeting_id: string;
   project_id: string | null;
@@ -184,6 +213,8 @@ export async function POST(
       }
     }
   }
+
+  buildAndStoreParents(created.map((c, i) => ({ ...chunkInputs[i], id: c.id })), meetingId).catch(() => {});
 
   return NextResponse.json({ chunks_created: created.length });
 }
