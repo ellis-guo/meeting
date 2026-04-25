@@ -370,6 +370,36 @@ async function embedAndStore(chunks: Array<ChunkInput & { id: string }>, meeting
   }
 }
 
+const PARENT_WINDOW = 4;
+
+async function buildAndStoreParents(transcriptChunks: Array<ChunkInput & { id: string }>): Promise<void> {
+  for (let i = 0; i < transcriptChunks.length; i += PARENT_WINDOW) {
+    const group = transcriptChunks.slice(i, i + PARENT_WINDOW);
+    const content = group.map(c => c.search_text ?? c.content).join("\n");
+    const uniqueSpeakers = [...new Set(group.flatMap(c => c.speaker ? [c.speaker] : []))];
+    const speakers = uniqueSpeakers.join(" | ") || "未知";
+    const parentId = crypto.randomUUID();
+    const meetingId = group[0].meeting_id;
+    const projectId = group[0].project_id ?? null;
+    const meetingDate = group[0].meeting_date ?? null;
+    const lineStart = group[0].line_start ?? null;
+    const lineEnd = group[group.length - 1].line_end ?? null;
+    try {
+      await prisma.$executeRaw`
+        INSERT INTO "ChunkParent" (id, meeting_id, project_id, meeting_date, content, speakers, line_start, line_end)
+        VALUES (${parentId}, ${meetingId}, ${projectId}, ${meetingDate}, ${content}, ${speakers}, ${lineStart}, ${lineEnd})
+      `;
+      for (const chunk of group) {
+        await prisma.$executeRaw`UPDATE "Chunk" SET parent_id = ${parentId} WHERE id = ${chunk.id}`;
+      }
+    } catch (e) {
+      await prisma.processingLog.create({
+        data: { level: "error", meeting_id: meetingId, context: encryptJSON({ type: "parent_creation_failed", window_start: i, detail: String(e) }) },
+      });
+    }
+  }
+}
+
 // ── GET: list standalone meetings ─────────────────────────────────────────────
 export async function GET() {
   const { userId } = await auth();
@@ -524,7 +554,11 @@ export async function POST(req: NextRequest) {
         }));
 
         controller.close();
+        const transcriptWithIds = chunksWithIds.filter(c => c.chunk_type === "transcript");
         embedAndStore(chunksWithIds, meeting.id, apiKey).catch(() => {});
+        if (formatOk && transcriptWithIds.length > 0) {
+          buildAndStoreParents(transcriptWithIds).catch(() => {});
+        }
 
       } catch (e) {
         try { controller.enqueue(send("error", { error: String(e) })); controller.close(); } catch { /* already closed */ }
