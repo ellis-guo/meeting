@@ -158,7 +158,7 @@ async function callDashScope(systemPrompt: string, userMessage: string, apiKey: 
 
 type QueryAnalysis = {
   queries: string[];
-  intent: "project" | "speaker" | "date" | "meeting" | "general";
+  intent: "project" | "speaker" | "date" | "meeting" | "audit" | "general";
   speakers: string[];
   date_filter: string | null;
   meeting_count: number;
@@ -173,6 +173,7 @@ const ANALYZE_SYSTEM_PROMPT = `你是查询分析助手。分析关于项目会�
 - speaker：询问某个或某几个特定人物的发言、观点或行动
 - date：问题中出现了具体日期（如"4月15日"、"上周三"），提取为 YYYY-MM-DD
 - meeting：询问某次或多次会议内容（含"上次/最近/最近几次会议"），无具体日期
+- audit：用户在审查项目是否有遗漏、是否满足需求、是否存在问题或风险（含"有没有遗漏"、"满不满足要求"、"差什么"、"有什么问题/风险"等）
 - general：跨会议综合问题、具体细节查询、或以上均不适合
 
 字段说明：
@@ -183,7 +184,7 @@ const ANALYZE_SYSTEM_PROMPT = `你是查询分析助手。分析关于项目会�
 仅输出合法 JSON：
 {
   "queries": ["改写版本1", "改写版本2"],
-  "intent": "project | speaker | date | meeting | general",
+  "intent": "project | speaker | date | meeting | audit | general",
   "speakers": [],
   "date_filter": null,
   "meeting_count": 1
@@ -195,7 +196,7 @@ async function analyzeQuery(question: string, apiKey: string, today: string): Pr
   try {
     const raw = await callDashScope(ANALYZE_SYSTEM_PROMPT, `当前日期：${today}\n问题：${question}`, apiKey);
     const parsed = extractJSON(raw) as Record<string, unknown>;
-    const intent = (["project", "speaker", "date", "meeting", "general"] as const)
+    const intent = (["project", "speaker", "date", "meeting", "audit", "general"] as const)
       .find(i => i === parsed.intent) ?? "general";
     const queries = Array.isArray(parsed.queries)
       ? (parsed.queries as unknown[]).filter((q): q is string => typeof q === "string").slice(0, 2)
@@ -391,7 +392,7 @@ export async function POST(
   const effectiveIntent =
     analysis.intent === "speaker" && validSpeakers.length === 0 ? "general"
     : analysis.intent === "date" && !resolvedDate ? "general"
-    : analysis.intent;
+    : analysis.intent as "project" | "speaker" | "date" | "meeting" | "audit" | "general";
 
   // Dynamic candidate cap per intent
   const BASE = 8;
@@ -400,6 +401,7 @@ export async function POST(
     effectiveIntent === "speaker" ? Math.min(BASE * Math.max(validSpeakers.length, 1), 24) :
     effectiveIntent === "date" ? Math.min(BASE * Math.max(dateMeetingCount, 1), 24) :
     effectiveIntent === "meeting" ? Math.min(BASE * Math.max(analysis.meeting_count, 1), 24) :
+    effectiveIntent === "audit" ? 16 :
     12; // general
 
   // Dynamic SQL LIMIT per vector (scales with candidateCap, must be after candidateCap)
@@ -420,7 +422,6 @@ export async function POST(
         WHERE project_id = ${projectId}
           AND chunk_type = 'summary'
           AND embedding IS NOT NULL
-          AND embedding <=> ${vecStr}::vector < 0.5
         ORDER BY embedding <=> ${vecStr}::vector
         LIMIT ${summaryLimitPerVec}
       `
@@ -466,7 +467,6 @@ export async function POST(
             AND chunk_type = 'summary'
             AND meeting_date = ${resolvedDate}
             AND embedding IS NOT NULL
-            AND embedding <=> ${vecStr}::vector < 0.5
           ORDER BY embedding <=> ${vecStr}::vector
           LIMIT ${summaryLimitPerVec}
         `
@@ -479,7 +479,6 @@ export async function POST(
             AND chunk_type = 'transcript'
             AND meeting_date = ${resolvedDate}
             AND embedding IS NOT NULL
-            AND embedding <=> ${vecStr}::vector < 0.5
           ORDER BY embedding <=> ${vecStr}::vector
           LIMIT ${transcriptLimitPerVec}
         `
@@ -496,7 +495,6 @@ export async function POST(
           WHERE project_id = ${projectId}
             AND chunk_type = 'summary'
             AND embedding IS NOT NULL
-            AND embedding <=> ${vecStr}::vector < 0.5
           ORDER BY embedding <=> ${vecStr}::vector
           LIMIT ${summaryLimitPerVec}
         `
@@ -508,7 +506,6 @@ export async function POST(
           WHERE project_id = ${projectId}
             AND chunk_type = 'transcript'
             AND embedding IS NOT NULL
-            AND embedding <=> ${vecStr}::vector < 0.5
           ORDER BY embedding <=> ${vecStr}::vector
           LIMIT ${transcriptLimitPerVec}
         `
@@ -528,7 +525,6 @@ export async function POST(
           WHERE project_id = ${projectId}
             AND chunk_type = 'summary'
             AND embedding IS NOT NULL
-            AND embedding <=> ${vecStr}::vector < 0.5
           ORDER BY embedding <=> ${vecStr}::vector
           LIMIT ${summaryLimitPerVec}
         `
@@ -540,7 +536,6 @@ export async function POST(
           WHERE project_id = ${projectId}
             AND chunk_type = 'transcript'
             AND embedding IS NOT NULL
-            AND embedding <=> ${vecStr}::vector < 0.5
           ORDER BY embedding <=> ${vecStr}::vector
           LIMIT ${transcriptLimitPerVec}
         `
@@ -610,11 +605,21 @@ export async function POST(
     parentRows = sortedParentIds.map(id => parentMap.get(id)).filter((p): p is ParentRow => !!p);
   }
 
-  const projectDoc = project.document ? decryptJSON(project.document) : null;
+  const projectDoc = project.document ? decryptJSON<Record<string, unknown>>(project.document) : null;
 
   const contextParts: string[] = [];
   if (projectDoc) {
-    contextParts.push(`项目主文档：\n${JSON.stringify(projectDoc, null, 2)}`);
+    if (effectiveIntent === "audit") {
+      const { checklist, ...docWithoutChecklist } = projectDoc;
+      contextParts.push(`项目主文档：\n${JSON.stringify(docWithoutChecklist, null, 2)}`);
+      if (Array.isArray(checklist) && checklist.length > 0) {
+        contextParts.push(`需求 Checklist（请逐条对照会议记录评估完成状态）：\n${JSON.stringify(checklist, null, 2)}`);
+      }
+    } else {
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      const { checklist: _omit, ...docWithoutChecklist } = projectDoc;
+      contextParts.push(`项目主文档：\n${JSON.stringify(docWithoutChecklist, null, 2)}`);
+    }
   }
 
   const chunkTexts: string[] = [];
@@ -745,6 +750,7 @@ export async function POST(
         parent_chunks_used: parentRows.length,
         no_parent_fallback: noParentTranscript.length,
         has_project_doc: !!projectDoc,
+        has_checklist: effectiveIntent === "audit" && Array.isArray(projectDoc?.checklist) && (projectDoc.checklist as unknown[]).length > 0,
         chunks_total: totalChunks,
         chunks_with_embedding: embeddedChunks,
         recent_embed_errors: recentEmbedErrors,

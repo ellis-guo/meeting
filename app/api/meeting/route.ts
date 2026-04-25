@@ -91,7 +91,7 @@ ${SHARED_SCHEMA}
 - meta.participants：提取会议记录中出现的所有发言者姓名
 - sections：须包含以下章节（确实不适用时可跳过）：
     1. 会议概述 — "text" 类型；一段简短概括
-    2. 议题详情 — 最重要的章节；涵盖每个讨论议题的完整细节；用 sub_items 拆解多要点议题；禁止用分号合并独立要点
+    2. 议题详情 — 最重要的章节；"bullets" 类型；涵盖每个讨论议题的完整细节；用 sub_items 拆解多要点议题；禁止用分号合并独立要点
     3. 关键决策 — 仅当会议中有明确拍板的结论时包含；"bullets" 类型，每条一个决策
     4. 行动项 — 若所有条目具有统一的负责人/任务结构则用 "table"，否则用 "bullets"；任务描述须含负责人，截止时间若提及则记录
     5. 遗留问题 — 仅当有明确未解决、需后续跟进的问题时包含；"bullets" 类型
@@ -297,18 +297,41 @@ function collectSourceLines(section: Section): number[] {
 }
 
 function buildSummaryChunks(summary: Summary, meetingId: string, projectId?: string): ChunkInput[] {
-  return summary.sections.map((section) => {
-    const plainText = `${section.title}\n${renderSectionText(section)}`;
-    const lines = collectSourceLines(section);
-    return {
-      meeting_id: meetingId, project_id: projectId ?? null, chunk_type: "summary",
-      content: plainText, search_text: plainText, section_title: section.title,
-      speaker: null,
-      line_start: lines.length ? Math.min(...lines) : null,
-      line_end: lines.length ? Math.max(...lines) : null,
-      meeting_date: summary.meta.date ?? null,
-    };
-  });
+  const chunks: ChunkInput[] = [];
+  for (const section of summary.sections) {
+    const c = section.content;
+    if (section.title === "议题详情" && c.type === "bullets" && c.items.length >= 2) {
+      for (const item of c.items) {
+        const subText = item.sub_items?.map((s) => `  - ${s.text}`).join("\n") ?? "";
+        const itemText = subText ? `- ${item.text}\n${subText}` : `- ${item.text}`;
+        const plainText = `${section.title}\n${itemText}`;
+        const lines = [
+          ...item.source_lines,
+          ...(item.sub_items?.flatMap((s) => s.source_lines) ?? []),
+        ];
+        chunks.push({
+          meeting_id: meetingId, project_id: projectId ?? null, chunk_type: "summary",
+          content: plainText, search_text: plainText, section_title: section.title,
+          speaker: null,
+          line_start: lines.length ? Math.min(...lines) : null,
+          line_end: lines.length ? Math.max(...lines) : null,
+          meeting_date: summary.meta.date ?? null,
+        });
+      }
+    } else {
+      const plainText = `${section.title}\n${renderSectionText(section)}`;
+      const lines = collectSourceLines(section);
+      chunks.push({
+        meeting_id: meetingId, project_id: projectId ?? null, chunk_type: "summary",
+        content: plainText, search_text: plainText, section_title: section.title,
+        speaker: null,
+        line_start: lines.length ? Math.min(...lines) : null,
+        line_end: lines.length ? Math.max(...lines) : null,
+        meeting_date: summary.meta.date ?? null,
+      });
+    }
+  }
+  return chunks;
 }
 
 const TENCENT_TURN = /^(.+?)\((\d{2}:\d{2}:\d{2})\):\s*(.+)/;
