@@ -4,7 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { decrypt, encryptJSON } from "@/lib/crypto";
 import { getDashScopeKey } from "@/lib/apiKey.server";
 
-const PARENT_WINDOW = 4;
+const PARENT_WINDOW = 5;
 
 async function buildAndStoreParents(transcriptChunks: Array<ChunkInput & { id: string }>, meetingId: string): Promise<void> {
   for (let i = 0; i < transcriptChunks.length; i += PARENT_WINDOW) {

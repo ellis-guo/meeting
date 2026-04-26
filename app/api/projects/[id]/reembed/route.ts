@@ -2,16 +2,14 @@ import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@clerk/nextjs/server";
 import { prisma } from "@/lib/prisma";
 import { getDashScopeKey } from "@/lib/apiKey.server";
-
-async function fetchEmbeddings(texts: string[], apiKey: string): Promise<number[][]> {
-  const res = await fetch("https://dashscope.aliyuncs.com/compatible-mode/v1/embeddings", {
-    method: "POST",
-    headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
-    body: JSON.stringify({ model: "text-embedding-v3", input: texts, dimension: 1024 }),
-  });
-  if (!res.ok) throw new Error(`Embedding API error: ${res.status} — ${await res.text()}`);
-  return ((await res.json()).data as Array<{ embedding: number[] }>).map((d) => d.embedding);
-}
+import { decrypt, decryptJSON } from "@/lib/crypto";
+import {
+  type Summary,
+  buildSummaryChunks,
+  buildTranscriptChunks,
+  embedAndStore,
+  buildAndStoreParents,
+} from "@/lib/chunking";
 
 export async function POST(
   _req: NextRequest,
@@ -29,48 +27,93 @@ export async function POST(
   }
 
   const { id: projectId } = await params;
-
   const project = await prisma.project.findFirst({ where: { id: projectId, user_id: userId } });
   if (!project) return NextResponse.json({ error: "Project not found" }, { status: 404 });
 
-  // Fetch all chunks without embeddings for this project
-  const chunks = await prisma.$queryRaw<Array<{ id: string; content: string }>>`
-    SELECT id, content FROM "Chunk"
-    WHERE project_id = ${projectId} AND embedding IS NULL
-  `;
+  const meetings = await prisma.meeting.findMany({
+    where: { project_id: projectId, user_id: userId },
+    select: { id: true, transcript: true, summary: true },
+  });
 
-  if (chunks.length === 0) {
-    return NextResponse.json({ embedded: 0, failed: 0, message: "所有 chunk 已有向量，无需重新处理" });
+  if (meetings.length === 0) {
+    return NextResponse.json({ message: "该项目暂无会议记录", meetings_processed: 0, chunks_created: 0 });
   }
 
-  const BATCH = 10;
-  let embedded = 0;
-  let failed = 0;
+  let totalChunks = 0;
+  let meetingsProcessed = 0;
 
-  for (let i = 0; i < chunks.length; i += BATCH) {
-    const batch = chunks.slice(i, i + BATCH);
-    let vectors: number[][];
+  for (const meeting of meetings) {
+    // 1. 清旧数据
+    await prisma.$executeRaw`DELETE FROM "ChunkParent" WHERE meeting_id = ${meeting.id}`;
+    await prisma.chunk.deleteMany({ where: { meeting_id: meeting.id } });
+
+    // 2. 解密摘要
+    let summary: Summary;
     try {
-      vectors = await fetchEmbeddings(batch.map((c) => c.content), apiKey);
+      summary = decryptJSON<Summary>(meeting.summary);
     } catch {
-      failed += batch.length;
       continue;
     }
-    for (let j = 0; j < batch.length; j++) {
-      const vec = `[${vectors[j].join(",")}]`;
-      try {
-        await prisma.$executeRaw`UPDATE "Chunk" SET embedding = ${vec}::vector WHERE id = ${batch[j].id}`;
-        embedded++;
-      } catch {
-        failed++;
+
+    // 3. 重建 summary chunks
+    const summaryChunks = buildSummaryChunks(summary, meeting.id, projectId);
+
+    // 4. 重建 transcript chunks（speaker-turn 格式）
+    let transcriptText = "";
+    try {
+      transcriptText = decrypt(meeting.transcript);
+    } catch { /* skip transcript if decrypt fails */ }
+
+    const { chunks: transcriptChunks, matchedLines, totalLines } = buildTranscriptChunks(
+      transcriptText,
+      meeting.id,
+      projectId,
+      summary.meta.date ?? undefined,
+    );
+
+    const formatOk = totalLines === 0 || matchedLines / totalLines >= 0.3;
+    const chunksToInsert = formatOk ? [...summaryChunks, ...transcriptChunks] : summaryChunks;
+
+    // 5. 写入 DB
+    const created = await Promise.all(
+      chunksToInsert.map((c) =>
+        prisma.chunk.create({
+          data: {
+            meeting_id: c.meeting_id,
+            project_id: c.project_id,
+            chunk_type: c.chunk_type,
+            content: c.content,
+            search_text: c.search_text,
+            section_title: c.section_title,
+            speaker: c.speaker,
+            line_start: c.line_start,
+            line_end: c.line_end,
+            meeting_date: c.meeting_date,
+          },
+        }),
+      ),
+    );
+
+    const chunksWithIds = created.map((c, i) => ({ ...chunksToInsert[i], id: c.id }));
+    totalChunks += created.length;
+
+    // 6. Embed
+    await embedAndStore(chunksWithIds, meeting.id, apiKey);
+
+    // 7. 重建 parents（仅 transcript）
+    if (formatOk) {
+      const transcriptWithIds = chunksWithIds.filter((c) => c.chunk_type === "transcript");
+      if (transcriptWithIds.length > 0) {
+        await buildAndStoreParents(transcriptWithIds);
       }
     }
+
+    meetingsProcessed++;
   }
 
   return NextResponse.json({
-    embedded,
-    failed,
-    total: chunks.length,
-    message: `向量化完成：${embedded} 成功，${failed} 失败`,
+    message: `重新切块完成：处理 ${meetingsProcessed} 个会议，共创建 ${totalChunks} 个 chunk`,
+    meetings_processed: meetingsProcessed,
+    chunks_created: totalChunks,
   });
 }

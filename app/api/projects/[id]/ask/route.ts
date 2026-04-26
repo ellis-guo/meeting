@@ -3,6 +3,7 @@ import { auth } from "@clerk/nextjs/server";
 import { prisma } from "@/lib/prisma";
 import { decryptJSON } from "@/lib/crypto";
 import { getDashScopeKey } from "@/lib/apiKey.server";
+import { extractKeywords } from "@/lib/jieba";
 
 const SOURCES_SEP = "%%SOURCES%%";
 
@@ -276,7 +277,7 @@ function rrfMerge(lists: ChunkRow[][], k = 60): { chunks: ChunkRow[]; scores: Ma
   return { chunks, scores };
 }
 
-function cliffCutoff(chunks: ChunkRow[], scores: Map<string, number>, cap: number, extraAfterCliff = 2, minKeep = 3): ChunkRow[] {
+function cliffCutoff(chunks: ChunkRow[], scores: Map<string, number>, cap: number, extraAfterCliff = 0, minKeep = 3): ChunkRow[] {
   const capped = chunks.slice(0, cap);
   if (capped.length <= minKeep) return capped;
   let maxDrop = 0;
@@ -287,29 +288,6 @@ function cliffCutoff(chunks: ChunkRow[], scores: Map<string, number>, cap: numbe
   }
   const cutoff = Math.min(capped.length, Math.max(minKeep, cliffIdx + 1 + extraAfterCliff));
   return capped.slice(0, cutoff);
-}
-
-const ZH_STOP = new Set("了的地得是在有和与或不对于关于什么哪里哪谁如何怎么为什么吗呢啊呀吧嗯".split(""));
-
-function extractKeywords(text: string): string[] {
-  const segments = text
-    .split(/[\s，。？！,.?!\r\n、：:；;「」【】()（）]+/)
-    .map(s => s.trim())
-    .filter(s => s.length >= 2);
-  const cjkRuns: string[] = [];
-  let run = "";
-  for (const ch of text) {
-    const isCJK = ch >= "\u4e00" && ch <= "\u9fff";
-    if (isCJK && !ZH_STOP.has(ch)) {
-      run += ch;
-    } else {
-      if (run.length >= 2) cjkRuns.push(run);
-      run = "";
-    }
-  }
-  if (run.length >= 2) cjkRuns.push(run);
-  const latinRuns = Array.from(text.matchAll(/[A-Za-z0-9_\-]{2,}/g), m => m[0]);
-  return [...new Set([...segments, ...cjkRuns, ...latinRuns])].slice(0, 8);
 }
 
 function escapeRegex(s: string): string {
