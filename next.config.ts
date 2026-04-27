@@ -4,16 +4,16 @@ import type { NextConfig } from "next";
 // DashScope calls are server-side only, so no connect-src entry needed here.
 const csp = [
   "default-src 'self'",
-  // Next.js inline scripts + Clerk JS
-  "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://clerk.com https://*.clerk.accounts.dev",
+  // Next.js inline scripts + Clerk JS (includes production custom domain)
+  "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://clerk.com https://*.clerk.accounts.dev https://*.ellisguo.com",
   // Clerk injects inline styles
   "style-src 'self' 'unsafe-inline'",
   // Fonts loaded from Google Fonts via next/font
   "font-src 'self' data: https://fonts.gstatic.com",
   // Images: self + data URIs (avatars, icons)
   "img-src 'self' data: blob: https:",
-  // XHR/fetch: self + Clerk auth endpoints
-  "connect-src 'self' https://clerk.com https://*.clerk.accounts.dev https://api.clerk.com",
+  // XHR/fetch: self + Clerk auth endpoints (includes production custom domain)
+  "connect-src 'self' https://clerk.com https://*.clerk.accounts.dev https://api.clerk.com https://*.ellisguo.com",
   // No plugins, objects, or frames
   "frame-src 'none'",
   "object-src 'none'",
