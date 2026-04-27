@@ -7,6 +7,7 @@ import { extractKeywords } from "@/lib/jieba";
 import { callDashScope, callDashScopeStream, fetchEmbedding } from "@/lib/dashscope";
 import { extractJSON } from "@/lib/utils";
 import { ASK_SYSTEM_PROMPT, ANALYZE_SYSTEM_PROMPT } from "@/lib/prompts";
+import { Prisma } from "@/app/generated/prisma/client";
 
 const SOURCES_SEP = "%%SOURCES%%";
 
@@ -160,9 +161,9 @@ export async function POST(
   const { id: projectId } = await params;
   const { question } = await req.json();
 
-  if (!question?.trim()) {
+  if (!question?.trim() || question.length > 2000) {
     return NextResponse.json(
-      { error: "question is required" },
+      { error: !question?.trim() ? "question is required" : "question too long (max 2000 characters)" },
       { status: 400 },
     );
   }
@@ -378,44 +379,34 @@ export async function POST(
     ]);
   } else if (effectiveIntent === "meeting" && resolvedDates) {
     // "最近N次会议"：多日期过滤，dates 来自 DB 查询，值可信
-    const dateList = resolvedDates.map((d) => `'${d}'`).join(",");
+    const joinedDates = Prisma.join(resolvedDates);
     [summaryResultsPerVec, transcriptResultsPerVec] = await Promise.all([
       Promise.all(
         allVecStrs.map((vecStr) =>
-          prisma.$queryRawUnsafe<ChunkRow[]>(
-            `
+          prisma.$queryRaw<ChunkRow[]>`
           SELECT id, meeting_id, chunk_type, section_title, speaker, meeting_date, search_text, parent_id
           FROM "Chunk"
-          WHERE project_id = $1
+          WHERE project_id = ${projectId}
             AND chunk_type = 'summary'
-            AND meeting_date IN (${dateList})
+            AND meeting_date IN (${joinedDates})
             AND embedding IS NOT NULL
-          ORDER BY embedding <=> $2::vector
-          LIMIT $3
+          ORDER BY embedding <=> ${vecStr}::vector
+          LIMIT ${summaryLimitPerVec}
         `,
-            projectId,
-            vecStr,
-            summaryLimitPerVec,
-          ),
         ),
       ),
       Promise.all(
         allVecStrs.map((vecStr) =>
-          prisma.$queryRawUnsafe<ChunkRow[]>(
-            `
+          prisma.$queryRaw<ChunkRow[]>`
           SELECT id, meeting_id, chunk_type, section_title, speaker, meeting_date, search_text, parent_id
           FROM "Chunk"
-          WHERE project_id = $1
+          WHERE project_id = ${projectId}
             AND chunk_type = 'transcript'
-            AND meeting_date IN (${dateList})
+            AND meeting_date IN (${joinedDates})
             AND embedding IS NOT NULL
-          ORDER BY embedding <=> $2::vector
-          LIMIT $3
+          ORDER BY embedding <=> ${vecStr}::vector
+          LIMIT ${transcriptLimitPerVec}
         `,
-            projectId,
-            vecStr,
-            transcriptLimitPerVec,
-          ),
         ),
       ),
     ]);
@@ -547,10 +538,10 @@ export async function POST(
 
   let parentRows: ParentRow[] = [];
   if (sortedParentIds.length > 0) {
-    const idList = sortedParentIds.map((id) => `'${id}'`).join(",");
-    const fetched = await prisma.$queryRawUnsafe<ParentRow[]>(
-      `SELECT id, meeting_id, meeting_date, content, speakers FROM "ChunkParent" WHERE id IN (${idList})`,
-    );
+    const fetched = await prisma.$queryRaw<ParentRow[]>`
+      SELECT id, meeting_id, meeting_date, content, speakers FROM "ChunkParent"
+      WHERE id IN (${Prisma.join(sortedParentIds)})
+    `;
     const parentMap = new Map(fetched.map((p) => [p.id, p]));
     parentRows = sortedParentIds
       .map((id) => parentMap.get(id))
@@ -776,7 +767,9 @@ export async function POST(
         })),
       };
 
-      controller.enqueue(send("done", { sources, _debug }));
+      const donePayload: Record<string, unknown> = { sources };
+      if (process.env.NODE_ENV !== "production") donePayload._debug = _debug;
+      controller.enqueue(send("done", donePayload));
       controller.close();
     },
   });

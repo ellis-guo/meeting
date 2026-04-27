@@ -105,6 +105,7 @@ export async function POST(req: NextRequest) {
 
   const { transcript, template = "smart", date, time, project_id } = await req.json();
   if (!transcript?.trim()) return NextResponse.json({ error: "transcript is required" }, { status: 400 });
+  if (transcript.length > 200_000) return NextResponse.json({ error: "transcript too large (max 200KB)" }, { status: 400 });
 
   let project: { id: string; document: unknown } | null = null;
   if (project_id) {

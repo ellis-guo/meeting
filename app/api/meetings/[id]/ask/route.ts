@@ -34,10 +34,11 @@ export async function POST(
   const { id: meetingId } = await params;
   const { question } = await req.json();
 
-  if (!question?.trim()) {
+  if (!question?.trim() || question.length > 2000) {
     const encoder = new TextEncoder();
+    const error = !question?.trim() ? "question is required" : "question too long (max 2000 characters)";
     return new Response(
-      encoder.encode(`event: error\ndata: ${JSON.stringify({ error: "question is required" })}\n\n`),
+      encoder.encode(`event: error\ndata: ${JSON.stringify({ error })}\n\n`),
       { status: 400, headers: { "Content-Type": "text/event-stream" } },
     );
   }

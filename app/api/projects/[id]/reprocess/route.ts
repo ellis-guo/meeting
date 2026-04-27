@@ -43,9 +43,9 @@ export async function POST(
   try {
     const content = await callDashScope(MEMORY_INIT_PROMPT, `项目参考文件：\n\n${fileContent}`, apiKey);
     document_draft = extractJSON(content);
-  } catch (e) {
+  } catch {
     return NextResponse.json(
-      { error: "Failed to generate document from reference files", detail: String(e) },
+      { error: "Failed to generate document from reference files" },
       { status: 502 },
     );
   }

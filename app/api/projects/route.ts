@@ -36,6 +36,15 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "name is required" }, { status: 400 });
   }
 
+  if (!Array.isArray(reference_files) || reference_files.length > 10) {
+    return NextResponse.json({ error: "reference_files must be an array of at most 10 items" }, { status: 400 });
+  }
+  for (const f of reference_files) {
+    if (typeof f !== "string" || f.length > 100_000) {
+      return NextResponse.json({ error: "each reference file must be a string under 100KB" }, { status: 400 });
+    }
+  }
+
   const project = await prisma.project.create({
     data: {
       user_id: userId,
@@ -68,12 +77,9 @@ export async function POST(req: NextRequest) {
       apiKey,
       langRule,
     );
-  } catch (e) {
+  } catch {
     return NextResponse.json(
-      {
-        error: "Failed to generate document from reference files",
-        detail: String(e),
-      },
+      { error: "Failed to generate document from reference files" },
       { status: 502 },
     );
   }
