@@ -2,15 +2,18 @@
 
 import { useState } from "react";
 import { usePathname } from "next/navigation";
+import { useAuth } from "@clerk/nextjs";
 import { useApiKey } from "@/lib/ApiKeyContext";
 
 export default function ApiKeyModal() {
   const pathname = usePathname();
+  const { isLoaded, userId } = useAuth();
   const { status, setApiKey } = useApiKey();
   const [input, setInput] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
+  if (!isLoaded || !userId) return null; // 未登录时不显示
   if (status.configured) return null;
   if (pathname.startsWith("/sign-in") || pathname.startsWith("/sign-up")) return null;
 

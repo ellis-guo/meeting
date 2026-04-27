@@ -102,6 +102,16 @@ function ProjectAskPanel({ projectId }: { projectId: string }) {
         body: JSON.stringify({ question }),
       });
 
+      if (!res.ok) {
+        try {
+          const data = await res.json();
+          setError(data.error ?? `请求失败 (${res.status})`);
+        } catch {
+          setError(`请求失败 (${res.status})`);
+        }
+        return;
+      }
+
       if (!res.body) {
         setError("请求失败");
         return;
