@@ -72,7 +72,7 @@ function ProjectAskPanel({ projectId }: { projectId: string }) {
   const [asking, setAsking] = useState(false);
   const [rawText, setRawText] = useState<string | null>(null);
   const [sources, setSources] = useState<AskSource[]>([]);
-  const [debug, setDebug] = useState<unknown>(null);
+  const [debug, setDebug] = useState<object | null>(null);
   const [error, setError] = useState<string | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
