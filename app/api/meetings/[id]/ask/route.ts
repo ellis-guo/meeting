@@ -6,6 +6,7 @@ import { getDashScopeKey } from "@/lib/apiKey.server";
 import { addLineNumbers, extractJSON } from "@/lib/utils";
 import { callDashScope, callDashScopeStream, fetchEmbedding } from "@/lib/dashscope";
 import { FULL_TEXT_ASK_PROMPT, RAG_ASK_PROMPT } from "@/lib/prompts";
+import { checkRateLimit } from "@/lib/ratelimit";
 
 const SOURCES_SEP = "%%SOURCES%%";
 
@@ -19,6 +20,15 @@ export async function POST(
     return new Response(
       encoder.encode(`event: error\ndata: ${JSON.stringify({ error: "Unauthorized" })}\n\n`),
       { status: 401, headers: { "Content-Type": "text/event-stream" } },
+    );
+  }
+
+  const rl = checkRateLimit(userId, "POST", "POST:/api/meetings/ask");
+  if (!rl.allowed) {
+    const encoder = new TextEncoder();
+    return new Response(
+      encoder.encode(`event: error\ndata: ${JSON.stringify({ error: "请求过于频繁，请稍后再试（每分钟最多 20 次）" })}\n\n`),
+      { status: 429, headers: { "Content-Type": "text/event-stream", "Retry-After": String(Math.ceil((rl.resetAt - Date.now()) / 1000)) } },
     );
   }
 

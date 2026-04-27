@@ -10,6 +10,7 @@ import {
   type SectionContent, type Section, type Summary, type ChunkInput,
   buildSummaryChunks, buildTranscriptChunks, embedAndStore, buildAndStoreParents,
 } from "@/lib/chunking";
+import { checkRateLimit } from "@/lib/ratelimit";
 
 // ── Streaming JSON helpers ────────────────────────────────────────────────────
 // Extract a complete {...} object starting at `start`. Returns null if incomplete.
@@ -94,6 +95,14 @@ export async function GET() {
 export async function POST(req: NextRequest) {
   const { userId } = await auth();
   if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+  const rl = checkRateLimit(userId, "POST", "POST:/api/meeting");
+  if (!rl.allowed) {
+    return NextResponse.json(
+      { error: "请求过于频繁，请稍后再试（每分钟最多 5 次）" },
+      { status: 429, headers: { "Retry-After": String(Math.ceil((rl.resetAt - Date.now()) / 1000)) } },
+    );
+  }
 
   const apiKey = (await getDashScopeKey()) ?? process.env.DASHSCOPE_API_KEY ?? "";
   if (!apiKey) return NextResponse.json({ error: "API key required. Please configure your DashScope API key in Settings." }, { status: 401 });
