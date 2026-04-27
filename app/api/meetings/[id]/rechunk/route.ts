@@ -3,6 +3,7 @@ import { auth } from "@clerk/nextjs/server";
 import { prisma } from "@/lib/prisma";
 import { decrypt, encryptJSON } from "@/lib/crypto";
 import { getDashScopeKey } from "@/lib/apiKey.server";
+import { fetchEmbeddings } from "@/lib/dashscope";
 
 const PARENT_WINDOW = 5;
 
@@ -89,30 +90,6 @@ function buildFallbackChunks(
   flush(lines.length);
 
   return chunks;
-}
-
-async function fetchEmbeddings(texts: string[], apiKey: string): Promise<number[][]> {
-  const res = await fetch(
-    "https://dashscope.aliyuncs.com/compatible-mode/v1/embeddings",
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify({
-        model: "text-embedding-v3",
-        input: texts,
-        dimension: 1024,
-      }),
-    },
-  );
-  if (!res.ok) {
-    const err = await res.text();
-    throw new Error(`Embedding API error: ${res.status} — ${err}`);
-  }
-  const data = await res.json();
-  return (data.data as Array<{ embedding: number[] }>).map((d) => d.embedding);
 }
 
 export async function POST(

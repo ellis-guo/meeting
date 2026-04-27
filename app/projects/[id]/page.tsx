@@ -3,6 +3,7 @@
 import { Fragment, useEffect, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
+import { toast } from "sonner";
 import { Project } from "@/app/types";
 import ProjectMemoryPanel from "@/app/components/ProjectMemoryPanel";
 
@@ -250,17 +251,19 @@ export default function ProjectDetailPage() {
   const [notFound, setNotFound] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [reembedding, setReembedding] = useState(false);
-  const [reembedResult, setReembedResult] = useState<string | null>(null);
 
   const handleReembed = async () => {
     setReembedding(true);
-    setReembedResult(null);
     try {
       const res = await fetch(`/api/projects/${id}/reembed`, { method: "POST" });
       const data = await res.json();
-      setReembedResult(data.message ?? (res.ok ? "完成" : data.error ?? "失败"));
+      if (res.ok) {
+        toast.success(data.message ?? "向量索引重建完成");
+      } else {
+        toast.error(data.error ?? "向量化失败，请重试");
+      }
     } catch {
-      setReembedResult("网络错误，请重试");
+      toast.error("网络错误，请重试");
     } finally {
       setReembedding(false);
     }
@@ -271,6 +274,7 @@ export default function ProjectDetailPage() {
     setDeleting(true);
     try {
       await fetch(`/api/projects/${id}`, { method: "DELETE" });
+      toast.success("项目已删除");
       router.push("/");
     } finally {
       setDeleting(false);
@@ -313,9 +317,6 @@ export default function ProjectDetailPage() {
           <span className="text-sm font-semibold text-gray-900 dark:text-gray-100">{project.name}</span>
         </div>
         <div className="flex items-center gap-2">
-        {reembedResult && (
-          <span className="text-xs text-gray-500 dark:text-gray-400">{reembedResult}</span>
-        )}
         <button
           onClick={handleReembed}
           disabled={reembedding}

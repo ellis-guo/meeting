@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { toast } from "sonner";
 import { DocumentDiff, ProjectMemory } from "../types";
 import TranscriptPanel from "./TranscriptPanel";
 
@@ -200,7 +201,6 @@ export default function DiffPanel({ diff, numberedTranscript, highlightedLines, 
   const [nextGoalsState, setNextGoalsState] = useState<NextGoalState[]>(() => initNextGoals(projectDocument, allUpdates));
 
   const [saving, setSaving] = useState(false);
-  const [saved, setSaved] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const handleConfirm = async () => {
@@ -254,8 +254,8 @@ export default function DiffPanel({ diff, numberedTranscript, highlightedLines, 
         body: JSON.stringify({ document: newDoc }),
       });
       if (!res.ok) { const d = await res.json(); throw new Error(d.error ?? "更新失败"); }
-      setSaved(true);
-      setTimeout(onConfirmed, 800);
+      toast.success("主文档已更新");
+      setTimeout(onConfirmed, 500);
     } catch (e) {
       setError(String(e));
     } finally {
@@ -416,9 +416,9 @@ export default function DiffPanel({ diff, numberedTranscript, highlightedLines, 
 
         {error && <p className="text-xs text-red-500">{error}</p>}
 
-        <button onClick={handleConfirm} disabled={saving || saved}
+        <button onClick={handleConfirm} disabled={saving}
           className="w-full py-2 text-sm font-medium rounded-lg bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors">
-          {saved ? "已保存 ✓" : saving ? "保存中..." : !hasContent ? "返回项目" : "确认写入主文档"}
+          {saving ? "保存中..." : !hasContent ? "返回项目" : "确认写入主文档"}
         </button>
       </div>
 

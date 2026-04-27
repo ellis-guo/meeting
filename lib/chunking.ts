@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import { encryptJSON } from "@/lib/crypto";
+import { fetchEmbeddings } from "@/lib/dashscope";
 
 export const PARENT_WINDOW = 5;
 
@@ -132,15 +133,7 @@ export function buildTranscriptChunks(
   return { chunks, matchedLines, totalLines: lines.length };
 }
 
-export async function fetchEmbeddings(texts: string[], apiKey: string): Promise<number[][]> {
-  const res = await fetch("https://dashscope.aliyuncs.com/compatible-mode/v1/embeddings", {
-    method: "POST",
-    headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
-    body: JSON.stringify({ model: "text-embedding-v3", input: texts, dimension: 1024 }),
-  });
-  if (!res.ok) throw new Error(`Embedding API error: ${res.status} — ${await res.text()}`);
-  return ((await res.json()).data as Array<{ embedding: number[] }>).map((d) => d.embedding);
-}
+export { fetchEmbeddings };
 
 export async function embedAndStore(
   chunks: Array<ChunkInput & { id: string }>,

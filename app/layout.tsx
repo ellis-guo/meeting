@@ -4,6 +4,7 @@ import "./globals.css";
 import { ClerkProvider } from "@clerk/nextjs";
 import { ApiKeyProvider } from "@/lib/ApiKeyContext";
 import ApiKeyModal from "./components/ApiKeyModal";
+import { Toaster } from "sonner";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -35,6 +36,7 @@ export default function RootLayout({
           <ApiKeyProvider>
             <ApiKeyModal />
             {children}
+            <Toaster richColors position="bottom-right" />
           </ApiKeyProvider>
         </body>
       </html>

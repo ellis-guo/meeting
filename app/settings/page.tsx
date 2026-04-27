@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import { toast } from "sonner";
 import { useApiKey } from "@/lib/ApiKeyContext";
 
 function formatExpiry(date: Date): string {
@@ -29,7 +30,6 @@ export default function SettingsPage() {
 
   const [lang, setLang] = useState<Lang>("zh");
   const [langSaving, setLangSaving] = useState(false);
-  const [langSaved, setLangSaved] = useState(false);
 
   useEffect(() => {
     fetch("/api/auth/preferences")
@@ -47,6 +47,7 @@ export default function SettingsPage() {
       await setApiKey(trimmed);
       setChanging(false);
       setInput("");
+      toast.success("API Key 已保存");
     } catch (e) {
       setError(e instanceof Error ? e.message : "保存失败，请重试");
     } finally {
@@ -57,15 +58,13 @@ export default function SettingsPage() {
   const handleLangChange = async (next: Lang) => {
     setLang(next);
     setLangSaving(true);
-    setLangSaved(false);
     try {
       await fetch("/api/auth/preferences", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ lang: next }),
       });
-      setLangSaved(true);
-      setTimeout(() => setLangSaved(false), 2000);
+      toast.success("语言偏好已保存");
     } finally {
       setLangSaving(false);
     }
@@ -178,7 +177,6 @@ export default function SettingsPage() {
           <div className="flex items-center justify-between">
             <h2 className="text-sm font-semibold text-gray-900 dark:text-gray-100">主文档语言偏好</h2>
             {langSaving && <span className="text-xs text-gray-400">保存中...</span>}
-            {langSaved && !langSaving && <span className="text-xs text-green-500">已保存</span>}
           </div>
 
           <div className="space-y-2">

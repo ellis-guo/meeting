@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
+import { toast } from "sonner";
 import SummaryPanel from "@/app/components/SummaryPanel";
 import TranscriptPanel from "@/app/components/TranscriptPanel";
 import MeetingAskPanel from "@/app/components/MeetingAskPanel";
@@ -72,6 +73,7 @@ export default function StandaloneMeetingDetailPage() {
     setDeleting(true);
     try {
       await fetch(`/api/meetings/${meetingId}`, { method: "DELETE" });
+      toast.success("会议记录已删除");
       router.push("/");
     } finally {
       setDeleting(false);

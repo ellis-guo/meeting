@@ -4,184 +4,11 @@ import { prisma } from "@/lib/prisma";
 import { decryptJSON } from "@/lib/crypto";
 import { getDashScopeKey } from "@/lib/apiKey.server";
 import { extractKeywords } from "@/lib/jieba";
+import { callDashScope, callDashScopeStream, fetchEmbedding } from "@/lib/dashscope";
+import { extractJSON } from "@/lib/utils";
+import { ASK_SYSTEM_PROMPT, ANALYZE_SYSTEM_PROMPT } from "@/lib/prompts";
 
 const SOURCES_SEP = "%%SOURCES%%";
-
-const ASK_SYSTEM_PROMPT = `你是一位项目助手，帮助用户理解会议讨论和项目进展。
-
-规则：
-1. 基于提供的 context 综合归纳，可跨多个片段整合信息，不得编造 context 中不存在的事实。
-2. 若 context 存在和提问信息明显不符合的事实，应先根据context纠正问题。
-3. 若 context 没有相关信息，直接回答"现有记录中未涉及该问题"。
-4. 允许用预训练知识解释专业术语或补充背景，但须把补充放在最后，并用"根据通用知识"明确标注。
-5. 根据问题类型选择回答结构：
-   - 进度/状态类 → 分阶段或分维度总结
-   - 事实确认类 → 直接回答 + 来源
-   - 讨论/决策类 → 列出各方观点 + 结论
-6. 对引用的具体事实或结论，在其后紧跟 [YYYY-MM-DD · 小节标题] 格式的行内来源标注（如 [2026-03-19 · 行动项]）；来源同时在 %%SOURCES%% 后列出供系统索引。
-7. 以结论性段落收尾，给出明确判断。
-8. 项目主文档是最高优先级的背景知识，应优先用于回答进度、目标、成员、决策类问题。
-
-
-输出格式（严格遵守，分两部分）：
-第一部分：完整回答文字（可含换行和 **粗体**）
-第二部分：另起一行写 %%SOURCES%%，然后输出来源 JSON 数组：
-[{"chunk_type":"summary | transcript | project_document","section_title":"字符串或null","speaker":"字符串或null","meeting_date":"YYYY-MM-DD或null"}]`;
-
-function extractJSON(text: string): unknown {
-  const start = text.indexOf("{");
-  const end = text.lastIndexOf("}");
-  if (start === -1 || end === -1 || end <= start) {
-    throw new Error("No valid JSON object found in response");
-  }
-  return JSON.parse(text.slice(start, end + 1));
-}
-
-async function callDashScopeStream(
-  systemPrompt: string,
-  userMessage: string,
-  apiKey: string,
-  onToken: (text: string) => void,
-  sep = "",
-): Promise<string> {
-  const res = await fetch(
-    "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions",
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify({
-        model: "qwen3.6-plus",
-        messages: [
-          { role: "system", content: systemPrompt },
-          { role: "user", content: userMessage },
-        ],
-        enable_thinking: false,
-        stream: true,
-      }),
-    },
-  );
-  if (!res.ok)
-    throw new Error(`DashScope API error: ${res.status} — ${await res.text()}`);
-
-  const reader = res.body!.getReader();
-  const decoder = new TextDecoder();
-  let fullText = "";
-  let buf = "";
-  const SEP_LEN = sep.length;
-  let safeSent = 0;
-  let sepFound = false;
-  let jsonMode = false;
-
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buf += decoder.decode(value, { stream: true });
-    const lines = buf.split("\n");
-    buf = lines.pop() ?? "";
-    for (const line of lines) {
-      if (!line.startsWith("data: ")) continue;
-      const payload = line.slice(6).trim();
-      if (payload === "[DONE]") continue;
-      try {
-        const chunk =
-          (
-            JSON.parse(payload) as {
-              choices?: Array<{ delta?: { content?: string } }>;
-            }
-          ).choices?.[0]?.delta?.content ?? "";
-        if (!chunk) continue;
-        fullText += chunk;
-
-        if (SEP_LEN === 0) {
-          onToken(chunk);
-          continue;
-        }
-
-        // Detect JSON-mode (LLM ignored separator format, output {"answer":...} instead)
-        if (
-          !jsonMode &&
-          safeSent === 0 &&
-          fullText.trimStart().startsWith("{")
-        ) {
-          jsonMode = true;
-        }
-        if (jsonMode || sepFound) continue;
-
-        const searchFrom = Math.max(0, safeSent - (SEP_LEN - 1));
-        const sepIdx = fullText.indexOf(sep, searchFrom);
-        if (sepIdx !== -1) {
-          const toSend = fullText.slice(safeSent, sepIdx);
-          if (toSend) onToken(toSend);
-          safeSent = sepIdx;
-          sepFound = true;
-        } else {
-          // Keep SEP_LEN-1 chars buffered to handle separator split across tokens
-          const safeEnd = Math.max(safeSent, fullText.length - (SEP_LEN - 1));
-          if (safeEnd > safeSent) {
-            onToken(fullText.slice(safeSent, safeEnd));
-            safeSent = safeEnd;
-          }
-        }
-      } catch {
-        /* skip */
-      }
-    }
-  }
-
-  // Flush remaining answer text when no separator in output
-  if (!sepFound && !jsonMode && safeSent < fullText.length) {
-    const remaining = fullText.slice(safeSent);
-    if (remaining) onToken(remaining);
-  }
-
-  // JSON mode: extract answer from JSON object and send as single token
-  if (jsonMode) {
-    try {
-      const parsed = extractJSON(fullText) as { answer?: string };
-      if (parsed.answer) onToken(parsed.answer);
-    } catch {
-      onToken(fullText.trim());
-    }
-  }
-
-  return fullText;
-}
-
-async function callDashScope(
-  systemPrompt: string,
-  userMessage: string,
-  apiKey: string,
-): Promise<string> {
-  const res = await fetch(
-    "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions",
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify({
-        model: "qwen3.6-plus",
-        messages: [
-          { role: "system", content: systemPrompt },
-          { role: "user", content: userMessage },
-        ],
-        enable_thinking: false,
-      }),
-    },
-  );
-  if (!res.ok) {
-    const err = await res.text();
-    throw new Error(`DashScope API error: ${res.status} — ${err}`);
-  }
-  const data = await res.json();
-  const content = data.choices?.[0]?.message?.content;
-  if (!content) throw new Error("Empty response from model");
-  return content;
-}
 
 type QueryAnalysis = {
   queries: string[];
@@ -190,32 +17,6 @@ type QueryAnalysis = {
   date_filter: string | null;
   meeting_count: number;
 };
-
-const ANALYZE_SYSTEM_PROMPT = `你是查询分析助手。分析关于项目会议记录的问题，同时完成两件事：
-1. 生成2个语义相同但措辞不同的改写版本，用于提升检索覆盖率
-2. 分类意图并提取关键实体
-
-意图分类（选一）：
-- project：宏观项目问题（目标/成员/背景/整体进度），主文档和摘要已足够回答
-- speaker：询问某个或某几个特定人物的发言、观点或行动
-- date：问题中出现了具体日期（如"4月15日"、"上周三"），提取为 YYYY-MM-DD
-- meeting：询问某次或多次会议内容（含"上次/最近/最近几次会议"），无具体日期
-- audit：用户在审查项目是否有遗漏、是否满足需求、是否存在问题或风险（含"有没有遗漏"、"满不满足要求"、"差什么"、"有什么问题/风险"等）
-- general：跨会议综合问题、具体细节查询、或以上均不适合
-
-字段说明：
-- speakers：提取到的人物姓名数组，仅 intent=speaker 时填写，其余填 []；最多2个
-- date_filter：intent=date 时填 YYYY-MM-DD，intent=meeting 且问题含时间范围限定（含"上次"、"最近"、"最近N次"、"这几次"等）时填 "latest"，其余填 null
-- meeting_count：intent=meeting 时，问题涉及的会议数量（"上次"=1，"最近两次"=2，"最近几次"=3，不确定=1）；其余 intent 填 1
-
-仅输出合法 JSON：
-{
-  "queries": ["改写版本1", "改写版本2"],
-  "intent": "project | speaker | date | meeting | audit | general",
-  "speakers": [],
-  "date_filter": null,
-  "meeting_count": 1
-}`;
 
 const ANALYZE_FALLBACK: QueryAnalysis = {
   queries: [],
@@ -263,30 +64,6 @@ async function analyzeQuery(
   } catch {
     return ANALYZE_FALLBACK;
   }
-}
-
-async function fetchEmbedding(text: string, apiKey: string): Promise<number[]> {
-  const res = await fetch(
-    "https://dashscope.aliyuncs.com/compatible-mode/v1/embeddings",
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify({
-        model: "text-embedding-v3",
-        input: [text],
-        dimension: 1024,
-      }),
-    },
-  );
-  if (!res.ok) {
-    const err = await res.text();
-    throw new Error(`Embedding API error: ${res.status} — ${err}`);
-  }
-  const data = await res.json();
-  return (data.data as Array<{ embedding: number[] }>)[0].embedding;
 }
 
 type ChunkRow = {
