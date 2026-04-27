@@ -19,7 +19,7 @@ const csp = [
   "object-src 'none'",
   "base-uri 'self'",
   "form-action 'self'",
-  "upgrade-insecure-requests",
+  // "upgrade-insecure-requests", // enable after HTTPS is configured
 ].join("; ");
 
 const securityHeaders = [
