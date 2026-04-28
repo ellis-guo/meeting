@@ -5,7 +5,7 @@ import type { NextConfig } from "next";
 const csp = [
   "default-src 'self'",
   // Next.js inline scripts + Clerk JS (includes production custom domain)
-  "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://clerk.com https://*.clerk.accounts.dev https://*.ellisguo.com",
+  "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://clerk.com https://*.clerk.accounts.dev https://*.ellisguo.com https://challenges.cloudflare.com",
   // Clerk injects inline styles
   "style-src 'self' 'unsafe-inline'",
   // Fonts loaded from Google Fonts via next/font
@@ -15,7 +15,7 @@ const csp = [
   // Clerk creates Web Workers from blob URLs for auth
   "worker-src 'self' blob:",
   // XHR/fetch: self + Clerk auth endpoints (includes production custom domain)
-  "connect-src 'self' https://clerk.com https://*.clerk.accounts.dev https://api.clerk.com https://*.ellisguo.com",
+  "connect-src 'self' https://clerk.com https://*.clerk.accounts.dev https://api.clerk.com https://*.ellisguo.com https://challenges.cloudflare.com",
   // Clerk uses Cloudflare Turnstile (iframe) for bot protection
   "frame-src 'self' https://challenges.cloudflare.com",
   "object-src 'none'",
