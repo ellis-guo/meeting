@@ -4,9 +4,10 @@ import { Fragment, useEffect, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { toast } from "sonner";
-import { ArrowLeft, ChevronRight, Plus, RefreshCw, Send, Trash2 } from "lucide-react";
+import { AlertCircle, ArrowLeft, ChevronDown, ChevronRight, ChevronUp, Plus, RefreshCw, Send, Trash2, Download } from "lucide-react";
 import { Project } from "@/app/types";
 import ProjectMemoryPanel from "@/app/components/ProjectMemoryPanel";
+import NotificationBell from "@/app/components/NotificationBell";
 
 const SOURCES_SEP = "%%SOURCES%%";
 
@@ -66,20 +67,59 @@ function renderAnswer(text: string, resolve?: CitationResolver): React.ReactNode
   });
 }
 
-function ProjectAskPanel({ projectId }: { projectId: string }) {
+type ProjectMessage = {
+  id: string;
+  role: "user" | "assistant";
+  text: string;
+  sources?: AskSource[];
+  debug?: object;
+  isStreaming?: boolean;
+  error?: string;
+};
+
+function stripSources(text: string): string {
+  const sepIdx = text.indexOf(SOURCES_SEP);
+  return sepIdx !== -1 ? text.slice(0, sepIdx).trimEnd() : text;
+}
+
+function ProjectAskPanel({ projectId, blocked, blockedCount }: { projectId: string; blocked: boolean; blockedCount: number }) {
   const [question, setQuestion] = useState("");
   const [asking, setAsking] = useState(false);
-  const [rawText, setRawText] = useState<string | null>(null);
-  const [sources, setSources] = useState<AskSource[]>([]);
-  const [debug, setDebug] = useState<object | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [messages, setMessages] = useState<ProjectMessage[]>([]);
+  const [collapsed, setCollapsed] = useState(false);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
-  const handleDownloadDebug = () => {
-    if (!debug) return;
+  // Reset history on project change
+  useEffect(() => {
+    setMessages([]);
+    setQuestion("");
+  }, [projectId]);
+
+  // Auto-scroll on new messages
+  useEffect(() => {
+    if (collapsed) return;
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+  }, [messages, collapsed]);
+
+  const updateLastAssistant = (patch: Partial<ProjectMessage>) => {
+    setMessages((prev) => {
+      const copy = [...prev];
+      for (let i = copy.length - 1; i >= 0; i--) {
+        if (copy[i].role === "assistant") {
+          copy[i] = { ...copy[i], ...patch };
+          break;
+        }
+      }
+      return copy;
+    });
+  };
+
+  const handleDownloadDebug = (msg: ProjectMessage, userText: string) => {
+    if (!msg.debug) return;
     const ts = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 23);
-    const q = question.trim().slice(0, 10).replace(/[\\/:*?"<>|]/g, "_");
-    const blob = new Blob([JSON.stringify(debug, null, 2)], { type: "application/json" });
+    const q = userText.trim().slice(0, 10).replace(/[\\/:*?"<>|]/g, "_");
+    const blob = new Blob([JSON.stringify(msg.debug, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
@@ -89,34 +129,47 @@ function ProjectAskPanel({ projectId }: { projectId: string }) {
   };
 
   const handleAsk = async () => {
-    if (!question.trim() || asking) return;
+    const q = question.trim();
+    if (!q || asking || blocked) return;
+
+    const userMsg: ProjectMessage = { id: `u-${Date.now()}`, role: "user", text: q };
+    const assistantMsg: ProjectMessage = {
+      id: `a-${Date.now()}`,
+      role: "assistant",
+      text: "",
+      isStreaming: true,
+    };
+    setMessages((prev) => [...prev, userMsg, assistantMsg]);
+    setQuestion("");
     setAsking(true);
-    setRawText(null);
-    setSources([]);
-    setDebug(null);
-    setError(null);
+    if (collapsed) setCollapsed(false);
+
     try {
       const res = await fetch(`/api/projects/${projectId}/ask`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ question }),
+        body: JSON.stringify({ question: q }),
       });
 
       if (!res.ok) {
+        let msg = `请求失败 (${res.status})`;
         try {
           const data = await res.json();
-          setError(data.error ?? `请求失败 (${res.status})`);
-        } catch {
-          setError(`请求失败 (${res.status})`);
-        }
+          msg = data.error ?? msg;
+        } catch { /* keep default */ }
+        updateLastAssistant({ isStreaming: false, error: msg });
         return;
       }
 
-      if (!res.body) { setError("请求失败"); return; }
+      if (!res.body) {
+        updateLastAssistant({ isStreaming: false, error: "请求失败" });
+        return;
+      }
 
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
       let buf = "";
+      let acc = "";
 
       while (true) {
         const { done, value } = await reader.read();
@@ -132,18 +185,24 @@ function ProjectAskPanel({ projectId }: { projectId: string }) {
           try {
             const data = JSON.parse(dataStr) as Record<string, unknown>;
             if (event === "token") {
-              setRawText((prev) => (prev ?? "") + ((data.text as string) ?? ""));
+              acc += (data.text as string) ?? "";
+              updateLastAssistant({ text: stripSources(acc) });
             } else if (event === "done") {
-              setSources(Array.isArray(data.sources) ? (data.sources as AskSource[]) : []);
-              if (data._debug !== undefined) setDebug(data._debug);
+              const sources = Array.isArray(data.sources) ? (data.sources as AskSource[]) : [];
+              const debug = data._debug !== undefined ? (data._debug as object) : undefined;
+              updateLastAssistant({ sources, debug, isStreaming: false });
             } else if (event === "error") {
-              setError((data.error as string) ?? "请求失败");
+              updateLastAssistant({
+                isStreaming: false,
+                error: (data.error as string) ?? "请求失败",
+              });
             }
           } catch { /* skip malformed */ }
         }
       }
+      updateLastAssistant({ isStreaming: false });
     } catch {
-      setError("网络错误，请重试");
+      updateLastAssistant({ isStreaming: false, error: "网络错误，请重试" });
     } finally {
       setAsking(false);
     }
@@ -156,68 +215,177 @@ function ProjectAskPanel({ projectId }: { projectId: string }) {
     }
   };
 
-  const displayText = rawText !== null
-    ? (() => {
-        const sepIdx = rawText.indexOf(SOURCES_SEP);
-        return sepIdx !== -1 ? rawText.slice(0, sepIdx).trimEnd() : rawText;
-      })()
-    : null;
+  const handleClear = () => {
+    if (messages.length === 0) return;
+    if (!window.confirm("清空当前会话历史？")) return;
+    setMessages([]);
+  };
 
   return (
     <section className="space-y-3">
-      <h2 className="text-xs font-semibold text-lark-3 uppercase tracking-wider">项目问答</h2>
-      <div className="rounded-xl border border-lark-border bg-lark-surface shadow-card p-4 space-y-3">
-        <div className="flex gap-2 items-end">
-          <textarea
-            ref={textareaRef}
-            value={question}
-            onChange={(e) => setQuestion(e.target.value)}
-            onKeyDown={handleKeyDown}
-            placeholder="针对整个项目历史提问，按 Enter 发送..."
-            rows={2}
-            className="flex-1 resize-none rounded-lg border border-lark-border bg-lark-sunken px-3 py-2 text-sm text-lark-1 placeholder:text-lark-4 focus:outline-none focus:ring-1 focus:ring-lark-blue/40 transition-colors"
-          />
+      <div className="flex items-center justify-between">
+        <h2 className="text-xs font-semibold text-lark-3 uppercase tracking-wider">项目问答</h2>
+        {messages.length > 0 && (
           <button
-            onClick={handleAsk}
-            disabled={asking || !question.trim()}
-            className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium bg-lark-blue text-white hover:bg-lark-blue-hover disabled:opacity-50 disabled:cursor-not-allowed transition-colors shrink-0"
+            onClick={() => setCollapsed((v) => !v)}
+            className="flex items-center gap-1 text-xs text-lark-3 hover:text-lark-1 transition-colors"
+            title={collapsed ? "展开历史" : "收起历史"}
           >
-            <Send size={13} />
-            {asking ? "思考中..." : "提问"}
-          </button>
-        </div>
-
-        {error && <p className="text-sm text-lark-danger">{error}</p>}
-
-        {displayText !== null && (
-          <div className="pt-1 border-t border-lark-border">
-            <div className="text-sm text-lark-1 leading-relaxed">
-              {renderAnswer(displayText, (date, section) => {
-                const s = sources.find(src => src.meeting_date === date && src.section_title?.trim() === section);
-                return s?.meeting_id ? `/projects/${projectId}/meetings/${s.meeting_id}` : null;
-              })}
-              {asking && (
-                <span className="inline-block w-0.5 h-3.5 ml-0.5 bg-lark-blue animate-pulse align-middle" />
-              )}
-            </div>
-            {!asking && debug && (
-              <div className="flex justify-end mt-2">
-                <button
-                  onClick={handleDownloadDebug}
-                  className="text-xs text-lark-3 hover:text-lark-2 transition-colors"
-                >
-                  下载 Debug
-                </button>
-              </div>
+            {collapsed ? (
+              <>
+                <ChevronUp size={12} />
+                展开历史 ({messages.filter((m) => m.role === "user").length})
+              </>
+            ) : (
+              <>
+                <ChevronDown size={12} />
+                收起历史
+              </>
             )}
+          </button>
+        )}
+      </div>
+      <div className="rounded-xl border border-lark-border bg-lark-surface shadow-card overflow-hidden">
+        {blocked && (
+          <div className="m-4 rounded-lg bg-lark-blue-light/40 border border-lark-blue/20 px-3 py-2 text-xs text-lark-2">
+            需要先处理 {blockedCount} 条主文档更新建议后才能提问。
           </div>
         )}
+
+        {/* Messages */}
+        {messages.length > 0 && !collapsed && (
+          <div className="px-4 py-4 max-h-[36rem] overflow-y-auto space-y-3 border-b border-lark-border">
+            {messages.map((m, idx) => {
+              const prevUser = idx > 0 && messages[idx - 1].role === "user" ? messages[idx - 1].text : "";
+              return (
+                <div key={m.id} className={`flex ${m.role === "user" ? "justify-end" : "justify-start"}`}>
+                  <div
+                    className={`max-w-[85%] rounded-2xl px-4 py-2.5 text-sm ${
+                      m.role === "user"
+                        ? "bg-lark-blue text-white rounded-br-sm"
+                        : m.error
+                          ? "bg-lark-danger/5 border border-lark-danger/30 text-lark-danger rounded-bl-sm"
+                          : "bg-lark-sunken text-lark-1 rounded-bl-sm"
+                    }`}
+                  >
+                    {m.role === "user" ? (
+                      <p className="whitespace-pre-wrap leading-relaxed">{m.text}</p>
+                    ) : m.error ? (
+                      <p className="leading-relaxed">{m.error}</p>
+                    ) : (
+                      <>
+                        <div className="leading-relaxed">
+                          {m.text
+                            ? renderAnswer(m.text, (date, _section) => {
+                                // 优先精确匹配 date + section_title；回退到仅 date 匹配
+                                const exact = m.sources?.find(
+                                  (src) => src.meeting_date === date && src.section_title?.trim() === _section && src.meeting_id,
+                                );
+                                const fallback = m.sources?.find(
+                                  (src) => src.meeting_date === date && src.meeting_id,
+                                );
+                                const s = exact ?? fallback;
+                                return s?.meeting_id ? `/projects/${projectId}/meetings/${s.meeting_id}` : null;
+                              })
+                            : <span className="text-lark-3">思考中...</span>}
+                        </div>
+                        {!m.isStreaming && m.debug && (
+                          <div className="mt-2 pt-2 border-t border-lark-border flex justify-end">
+                            <button
+                              onClick={() => handleDownloadDebug(m, prevUser)}
+                              className="flex items-center gap-1 text-[11px] text-lark-3 hover:text-lark-2 transition-colors"
+                            >
+                              <Download size={11} />
+                              下载 Debug
+                            </button>
+                          </div>
+                        )}
+                      </>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+            <div ref={messagesEndRef} />
+          </div>
+        )}
+
+        {/* Input */}
+        <div className="p-4 space-y-2">
+          <div className="flex gap-2 items-end">
+            <textarea
+              ref={textareaRef}
+              value={question}
+              onChange={(e) => setQuestion(e.target.value)}
+              onKeyDown={handleKeyDown}
+              placeholder={blocked ? "请先处理待确认的主文档更新..." : "针对整个项目历史提问，按 Enter 发送..."}
+              rows={1}
+              disabled={blocked}
+              className="flex-1 resize-none rounded-lg border border-lark-border bg-lark-sunken px-3 py-2 text-sm text-lark-1 placeholder:text-lark-4 focus:outline-none focus:ring-1 focus:ring-lark-blue/40 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            />
+            <button
+              onClick={handleAsk}
+              disabled={asking || !question.trim() || blocked}
+              className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium bg-lark-blue text-white hover:bg-lark-blue-hover disabled:opacity-50 disabled:cursor-not-allowed transition-colors shrink-0"
+            >
+              <Send size={13} />
+              {asking ? "思考中..." : "提问"}
+            </button>
+          </div>
+          {messages.length > 0 && (
+            <div className="flex justify-end">
+              <button
+                onClick={handleClear}
+                className="flex items-center gap-1 text-xs text-lark-3 hover:text-lark-danger transition-colors"
+              >
+                <Trash2 size={11} />
+                清空对话
+              </button>
+            </div>
+          )}
+        </div>
       </div>
     </section>
   );
 }
 
-function MeetingCard({ meeting, projectId }: { meeting: { id: string; created_at: string; summary: { meta: { date: string | null; participants: string[] } } }; projectId: string }) {
+type MeetingCardData = {
+  id: string;
+  created_at: string;
+  summary: { meta: { date: string | null; participants: string[] } };
+  processing_status?: string;
+  diff_status?: string | null;
+};
+
+function StatusBadge({ meeting }: { meeting: MeetingCardData }) {
+  const status = meeting.processing_status;
+  const diff = meeting.diff_status;
+
+  if (status === "processing" || status === "pending") {
+    return (
+      <span className="text-[10px] px-2 py-0.5 rounded-full bg-lark-blue-light text-lark-blue font-medium">
+        处理中
+      </span>
+    );
+  }
+  if (status === "failed") {
+    return (
+      <span className="text-[10px] px-2 py-0.5 rounded-full bg-lark-danger/10 text-lark-danger font-medium">
+        生成失败
+      </span>
+    );
+  }
+  if (diff === "pending") {
+    return (
+      <span className="text-[10px] px-2 py-0.5 rounded-full bg-lark-blue-light text-lark-blue font-medium">
+        待确认主文档
+      </span>
+    );
+  }
+  return null;
+}
+
+function MeetingCard({ meeting, projectId }: { meeting: MeetingCardData; projectId: string }) {
   const { meta } = meeting.summary;
   const date = meta.date ?? new Date(meeting.created_at).toLocaleDateString("zh-CN");
   const participants = meta.participants.length > 0 ? meta.participants.join("、") : "—";
@@ -227,9 +395,12 @@ function MeetingCard({ meeting, projectId }: { meeting: { id: string; created_at
       href={`/projects/${projectId}/meetings/${meeting.id}`}
       className="flex items-center justify-between px-5 py-4 rounded-xl border border-lark-border bg-lark-surface shadow-card hover:shadow-card-hover transition-all"
     >
-      <div className="space-y-0.5">
-        <div className="text-sm font-medium text-lark-1">{date}</div>
-        <div className="text-xs text-lark-3">{participants}</div>
+      <div className="space-y-0.5 min-w-0 flex-1">
+        <div className="flex items-center gap-2">
+          <span className="text-sm font-medium text-lark-1">{date}</span>
+          <StatusBadge meeting={meeting} />
+        </div>
+        <div className="text-xs text-lark-3 truncate">{participants}</div>
       </div>
       <ChevronRight size={15} className="text-lark-4 shrink-0" />
     </Link>
@@ -246,6 +417,41 @@ export default function ProjectDetailPage() {
   const [notFound, setNotFound] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [reembedding, setReembedding] = useState(false);
+  const [editingName, setEditingName] = useState(false);
+  const [nameDraft, setNameDraft] = useState("");
+  const [savingName, setSavingName] = useState(false);
+
+  const handleStartRename = () => {
+    if (!project) return;
+    setNameDraft(project.name);
+    setEditingName(true);
+  };
+
+  const handleSaveName = async () => {
+    if (!project) return;
+    const newName = nameDraft.trim();
+    if (!newName || newName === project.name) {
+      setEditingName(false);
+      return;
+    }
+    setSavingName(true);
+    try {
+      const res = await fetch(`/api/projects/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: newName }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "重命名失败");
+      setProject((p) => (p ? { ...p, name: newName } : p));
+      setEditingName(false);
+      toast.success("项目已重命名");
+    } catch (e) {
+      toast.error(String(e));
+    } finally {
+      setSavingName(false);
+    }
+  };
 
   const handleReembed = async () => {
     setReembedding(true);
@@ -303,6 +509,8 @@ export default function ProjectDetailPage() {
     );
   }
 
+  const pendingMeetings = (project.meetings ?? []).filter((m) => m.diff_status === "pending");
+
   return (
     <div className="min-h-screen bg-lark-canvas">
       <header className="px-8 py-4 border-b border-lark-border bg-lark-surface flex items-center justify-between">
@@ -312,7 +520,31 @@ export default function ProjectDetailPage() {
             首页
           </Link>
           <span className="text-lark-border">|</span>
-          <span className="text-sm font-semibold text-lark-1">{project.name}</span>
+          {editingName ? (
+            <input
+              type="text"
+              value={nameDraft}
+              onChange={(e) => setNameDraft(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") { e.preventDefault(); handleSaveName(); }
+                else if (e.key === "Escape") { e.preventDefault(); setEditingName(false); }
+              }}
+              onBlur={() => setEditingName(false)}
+              autoFocus
+              disabled={savingName}
+              maxLength={100}
+              className="text-sm font-semibold text-lark-1 bg-lark-sunken border border-lark-blue/40 rounded-md px-2 py-0.5 focus:outline-none focus:ring-2 focus:ring-lark-blue/40 min-w-[120px]"
+              ref={(el) => { if (el) el.select(); }}
+            />
+          ) : (
+            <span
+              className="text-sm font-semibold text-lark-1 cursor-pointer hover:bg-lark-sunken rounded-md px-1 py-0.5 transition-colors"
+              onDoubleClick={handleStartRename}
+              title="双击重命名"
+            >
+              {project.name}
+            </span>
+          )}
         </div>
         <div className="flex items-center gap-2">
           <button
@@ -338,17 +570,34 @@ export default function ProjectDetailPage() {
             <Plus size={14} />
             新建会议
           </button>
+          <NotificationBell />
         </div>
       </header>
 
       <main className="max-w-3xl mx-auto px-8 py-8 space-y-6">
+        {pendingMeetings.length > 0 && (
+          <button
+            onClick={() => router.push(`/projects/${id}/meetings/${pendingMeetings[0].id}?diff=1`)}
+            className="w-full rounded-xl border border-lark-blue/30 bg-lark-blue-light/40 px-4 py-3 flex items-center gap-3 text-left hover:bg-lark-blue-light/60 transition-colors"
+          >
+            <AlertCircle size={16} className="text-lark-blue shrink-0" />
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-medium text-lark-1">
+                {pendingMeetings.length} 条主文档更新建议待处理
+              </p>
+              <p className="text-xs text-lark-3 mt-0.5">点击进入第一条进行确认或忽略</p>
+            </div>
+            <ChevronRight size={14} className="text-lark-blue shrink-0" />
+          </button>
+        )}
+
         <ProjectMemoryPanel
           projectId={id}
           memory={project.document}
           onUpdated={(updated) => setProject((p) => p ? { ...p, document: updated } : p)}
         />
 
-        <ProjectAskPanel projectId={id} />
+        <ProjectAskPanel projectId={id} blocked={pendingMeetings.length > 0} blockedCount={pendingMeetings.length} />
 
         <section className="space-y-3">
           <h2 className="text-xs font-semibold text-lark-3 uppercase tracking-wider">历史会议</h2>

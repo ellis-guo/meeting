@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { toast } from "sonner";
 import { ArrowLeft } from "lucide-react";
+import NotificationBell from "@/app/components/NotificationBell";
 import { useApiKey } from "@/lib/ApiKeyContext";
 
 function formatExpiry(date: Date): string {
@@ -79,13 +80,16 @@ export default function SettingsPage() {
 
   return (
     <div className="min-h-screen bg-lark-canvas">
-      <header className="px-6 py-4 border-b border-lark-border bg-lark-surface flex items-center gap-3">
-        <Link href="/" className="flex items-center gap-1.5 text-sm text-lark-2 hover:text-lark-1 transition-colors">
-          <ArrowLeft size={14} />
-          首页
-        </Link>
-        <span className="text-lark-border">|</span>
-        <span className="text-sm font-medium text-lark-1">设置</span>
+      <header className="px-6 py-4 border-b border-lark-border bg-lark-surface flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <Link href="/" className="flex items-center gap-1.5 text-sm text-lark-2 hover:text-lark-1 transition-colors">
+            <ArrowLeft size={14} />
+            首页
+          </Link>
+          <span className="text-lark-border">|</span>
+          <span className="text-sm font-medium text-lark-1">设置</span>
+        </div>
+        <NotificationBell />
       </header>
 
       <div className="max-w-lg mx-auto px-6 py-8 space-y-5">

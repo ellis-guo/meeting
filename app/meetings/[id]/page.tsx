@@ -8,6 +8,7 @@ import { ArrowLeft, Pencil, Printer, Trash2, X } from "lucide-react";
 import SummaryPanel from "@/app/components/SummaryPanel";
 import TranscriptPanel from "@/app/components/TranscriptPanel";
 import MeetingAskPanel from "@/app/components/MeetingAskPanel";
+import NotificationBell from "@/app/components/NotificationBell";
 import { Summary } from "@/app/types";
 import { addLineNumbers } from "@/lib/utils";
 
@@ -150,6 +151,7 @@ export default function StandaloneMeetingDetailPage() {
             <Trash2 size={13} />
             {deleting ? "删除中..." : "删除"}
           </button>
+          <NotificationBell />
         </div>
       </header>
 

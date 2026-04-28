@@ -6,6 +6,7 @@ import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
 import { ProjectMemory } from "@/app/types";
 import ProjectMemoryPanel from "@/app/components/ProjectMemoryPanel";
+import NotificationBell from "@/app/components/NotificationBell";
 import { useApiKey } from "@/lib/ApiKeyContext";
 
 export default function NewProjectPage() {
@@ -94,13 +95,16 @@ export default function NewProjectPage() {
             <span className="text-lark-border">|</span>
             <span className="text-sm font-medium text-lark-1">确认项目主文档</span>
           </div>
-          <button
-            onClick={handleConfirmDraft}
-            disabled={saving}
-            className="px-4 py-1.5 rounded-lg text-sm font-medium bg-lark-blue text-white hover:bg-lark-blue-hover disabled:opacity-50 transition-colors"
-          >
-            {saving ? "保存中..." : "确认并进入项目"}
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={handleConfirmDraft}
+              disabled={saving}
+              className="px-4 py-1.5 rounded-lg text-sm font-medium bg-lark-blue text-white hover:bg-lark-blue-hover disabled:opacity-50 transition-colors"
+            >
+              {saving ? "保存中..." : "确认并进入项目"}
+            </button>
+            <NotificationBell />
+          </div>
         </header>
 
         <div className="max-w-2xl mx-auto px-6 py-8 space-y-5">
@@ -120,13 +124,16 @@ export default function NewProjectPage() {
   // Creation form
   return (
     <div className="min-h-screen bg-lark-canvas">
-      <header className="px-6 py-4 border-b border-lark-border bg-lark-surface flex items-center gap-3">
-        <Link href="/" className="flex items-center gap-1.5 text-sm text-lark-2 hover:text-lark-1 transition-colors">
-          <ArrowLeft size={14} />
-          首页
-        </Link>
-        <span className="text-lark-border">|</span>
-        <span className="text-sm font-medium text-lark-1">新建项目</span>
+      <header className="px-6 py-4 border-b border-lark-border bg-lark-surface flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <Link href="/" className="flex items-center gap-1.5 text-sm text-lark-2 hover:text-lark-1 transition-colors">
+            <ArrowLeft size={14} />
+            首页
+          </Link>
+          <span className="text-lark-border">|</span>
+          <span className="text-sm font-medium text-lark-1">新建项目</span>
+        </div>
+        <NotificationBell />
       </header>
 
       <div className="max-w-2xl mx-auto px-6 py-8 space-y-5">

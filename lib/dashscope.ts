@@ -2,7 +2,8 @@ import { extractJSON } from "@/lib/utils";
 
 const CHAT_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions";
 const EMBED_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1/embeddings";
-const CHAT_MODEL = "qwen3.6-plus";
+export const CHAT_MODEL = "qwen3.6-plus";
+export const FAST_CHAT_MODEL = "qwen3.6-flash";
 const EMBED_MODEL = "text-embedding-v3";
 const EMBED_DIM = 1024;
 
@@ -10,12 +11,13 @@ export async function callDashScope(
   systemPrompt: string,
   userMessage: string,
   apiKey: string,
+  model: string = CHAT_MODEL,
 ): Promise<string> {
   const res = await fetch(CHAT_URL, {
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
     body: JSON.stringify({
-      model: CHAT_MODEL,
+      model,
       messages: [{ role: "system", content: systemPrompt }, { role: "user", content: userMessage }],
       enable_thinking: false,
     }),
@@ -33,12 +35,13 @@ export async function callDashScopeStream(
   apiKey: string,
   onToken: (text: string) => void,
   sep = "",
+  model: string = CHAT_MODEL,
 ): Promise<string> {
   const res = await fetch(CHAT_URL, {
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
     body: JSON.stringify({
-      model: CHAT_MODEL,
+      model,
       messages: [{ role: "system", content: systemPrompt }, { role: "user", content: userMessage }],
       enable_thinking: false,
       stream: true,

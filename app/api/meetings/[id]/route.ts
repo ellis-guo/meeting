@@ -14,7 +14,16 @@ export async function GET(
 
   const meeting = await prisma.meeting.findFirst({
     where: { id, user_id: userId },
-    select: { id: true, created_at: true, transcript: true, summary: true, project_id: true },
+    select: {
+      id: true,
+      created_at: true,
+      transcript: true,
+      summary: true,
+      project_id: true,
+      processing_status: true,
+      diff_status: true,
+      document_diff: true,
+    },
   });
 
   if (!meeting) {
@@ -25,6 +34,7 @@ export async function GET(
     ...meeting,
     transcript: decrypt(meeting.transcript),
     summary: decryptJSON(meeting.summary),
+    document_diff: meeting.document_diff ? decryptJSON(meeting.document_diff) : null,
   });
 }
 

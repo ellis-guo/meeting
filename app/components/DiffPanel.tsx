@@ -3,16 +3,15 @@
 import { useState } from "react";
 import { toast } from "sonner";
 import { DocumentDiff, ProjectMemory } from "../types";
-import TranscriptPanel from "./TranscriptPanel";
 
 interface Props {
   diff: DocumentDiff | null;
-  numberedTranscript: string;
-  highlightedLines: number[];
   projectId: string;
+  meetingId?: string;            // 新建会议流程下可能为空（meeting 还没 create）
   projectDocument: ProjectMemory;
   meetingDate: string;
   onConfirmed: () => void;
+  onDismissed?: () => void;      // 可选：忽略本次更新
 }
 
 const FIELD_LABELS: Record<string, string> = {
@@ -20,16 +19,14 @@ const FIELD_LABELS: Record<string, string> = {
   goals: "核心目标",
   members: "成员",
   milestones: "里程碑",
-  current_progress: "当前进度",
   key_decisions: "关键决策",
   open_issues: "待解决问题",
   risks: "风险",
   glossary: "术语表",
   checklist: "需求清单",
-  next_meeting_goals: "下次会议目标",
 };
 
-const FULL_LISTING_FIELDS = new Set(["checklist", "milestones", "open_issues", "next_meeting_goals"]);
+const FULL_LISTING_FIELDS = new Set(["checklist", "milestones", "open_issues"]);
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -39,10 +36,6 @@ type OpenIssueState = {
   issue: string; owner: string | null;
   opened_at: string | null; resolved_at: string | null;
   isNew: boolean; willResolve: boolean; accepted: boolean;
-};
-type NextGoalState = {
-  goal: string; set_at: string | null; completed_at: string | null;
-  isNew: boolean; willComplete: boolean; accepted: boolean;
 };
 
 // ── Normalize helpers ─────────────────────────────────────────────────────────
@@ -58,16 +51,6 @@ function normalizeOpenIssue(item: unknown) {
   };
 }
 
-function normalizeNextGoal(item: unknown) {
-  if (typeof item === "string") return { goal: item, set_at: null, completed_at: null };
-  const o = item as Record<string, unknown>;
-  return {
-    goal: String(o.goal ?? ""),
-    set_at: (o.set_at as string | null) ?? null,
-    completed_at: (o.completed_at as string | null) ?? null,
-  };
-}
-
 // ── Standard diff helpers ─────────────────────────────────────────────────────
 
 function renderItem(item: unknown): string {
@@ -76,8 +59,6 @@ function renderItem(item: unknown): string {
   const o = item as Record<string, unknown>;
   if ("decision" in o) return `${o.date ? `[${o.date}] ` : ""}${o.decision}${o.rationale ? ` — ${o.rationale}` : ""}`;
   if ("issue" in o) return `${o.issue}${o.owner ? ` (${o.owner})` : ""}${o.resolved_at ? ` ✓ ${o.resolved_at}` : ""}`;
-  if ("goal" in o) return `${o.goal}${o.completed_at ? ` ✓ ${o.completed_at}` : ""}`;
-  if ("summary" in o) return `${o.summary} (截至 ${o.as_of})`;
   if ("risk" in o) return `${o.risk}${o.mitigation ? ` → ${o.mitigation}` : ""}`;
   if ("item" in o && "status" in o) return `${o.status === "done" ? "✓" : "○"} ${o.item}`;
   if ("title" in o && "status" in o) return `[${o.status}] ${o.date ? `${o.date} ` : ""}${o.title}`;
@@ -100,8 +81,6 @@ function ValuePreview({ value }: { value: unknown }) {
     );
   }
   if (typeof value === "object") {
-    const o = value as Record<string, unknown>;
-    if ("summary" in o) return <span>{o.summary as string} <span className="text-lark-3">截至 {o.as_of as string}</span></span>;
     return <span className="font-mono text-lark-3">{JSON.stringify(value)}</span>;
   }
   return <span>{String(value)}</span>;
@@ -164,27 +143,9 @@ function initOpenIssues(doc: ProjectMemory, updates: DocumentDiff["updates"]): O
   ];
 }
 
-function initNextGoals(doc: ProjectMemory, updates: DocumentDiff["updates"]): NextGoalState[] {
-  const rawExisting = Array.isArray(doc.next_meeting_goals) ? doc.next_meeting_goals
-    : typeof doc.next_meeting_goals === "string" ? [{ goal: doc.next_meeting_goals, set_at: null, completed_at: null }] : [];
-  const existing = rawExisting.map(normalizeNextGoal);
-  const llm = updates.find(u => u.field === "next_meeting_goals");
-  if (!llm || !Array.isArray(llm.new)) {
-    return existing.filter(i => !i.completed_at).map(i => ({ ...i, isNew: false, willComplete: false, accepted: true }));
-  }
-  const llmNew = (llm.new as unknown[]).map(normalizeNextGoal);
-  const existingSet = new Set(existing.map(i => i.goal));
-  const addedByLLM = llmNew.filter(i => !existingSet.has(i.goal));
-  const completedByLLM = new Set(llmNew.filter(i => i.completed_at && existingSet.has(i.goal)).map(i => i.goal));
-  return [
-    ...existing.filter(i => !i.completed_at).map(i => ({ ...i, isNew: false, willComplete: completedByLLM.has(i.goal), accepted: true })),
-    ...addedByLLM.map(i => ({ ...i, isNew: true, willComplete: false, accepted: true })),
-  ];
-}
-
 // ── Main component ─────────────────────────────────────────────────────────────
 
-export default function DiffPanel({ diff, numberedTranscript, highlightedLines, projectId, projectDocument, meetingDate, onConfirmed }: Props) {
+export default function DiffPanel({ diff, projectId, meetingId, projectDocument, meetingDate, onConfirmed, onDismissed }: Props) {
   const allUpdates = diff?.updates ?? [];
   const stdUpdates = allUpdates.filter(u => !FULL_LISTING_FIELDS.has(u.field));
 
@@ -198,7 +159,6 @@ export default function DiffPanel({ diff, numberedTranscript, highlightedLines, 
   const [checklistState, setChecklistState] = useState<ChecklistItemState[]>(() => initChecklist(projectDocument, allUpdates));
   const [milestonesState, setMilestonesState] = useState<MilestoneItemState[]>(() => initMilestones(projectDocument, allUpdates));
   const [openIssuesState, setOpenIssuesState] = useState<OpenIssueState[]>(() => initOpenIssues(projectDocument, allUpdates));
-  const [nextGoalsState, setNextGoalsState] = useState<NextGoalState[]>(() => initNextGoals(projectDocument, allUpdates));
 
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -227,23 +187,15 @@ export default function DiffPanel({ diff, numberedTranscript, highlightedLines, 
       ...openIssuesState.filter(i => i.isNew && i.accepted).map(i => ({ issue: i.issue, owner: i.owner, opened_at: meetingDate, resolved_at: null })),
     ];
 
-    const archivedCompleted = (Array.isArray(projectDocument.next_meeting_goals)
-      ? projectDocument.next_meeting_goals
-      : typeof projectDocument.next_meeting_goals === "string"
-        ? [{ goal: projectDocument.next_meeting_goals, set_at: null, completed_at: null }]
-        : []).map(normalizeNextGoal).filter(i => !!i.completed_at);
-    const newGoals = [
-      ...archivedCompleted,
-      ...nextGoalsState.filter(i => !i.isNew).map(({ isNew: _, willComplete, accepted: __, ...rest }) =>
-        willComplete ? { ...rest, completed_at: meetingDate } : rest),
-      ...nextGoalsState.filter(i => i.isNew && i.accepted).map(i => ({ goal: i.goal, set_at: meetingDate, completed_at: null })),
-    ];
-    newDoc.next_meeting_goals = newGoals.length > 0 ? newGoals : null;
-
     setSaving(true); setError(null);
     try {
-      const res = await fetch(`/api/projects/${projectId}/document`, {
-        method: "PATCH",
+      // 有 meetingId 时走 apply 接口（同时标记 diff_status=confirmed 并清空 document_diff）
+      // 没有 meetingId（新建流程内 meeting 已存在但未传时）回退到旧的 PATCH /document
+      const url = meetingId
+        ? `/api/projects/${projectId}/meetings/${meetingId}/diff/apply`
+        : `/api/projects/${projectId}/document`;
+      const res = await fetch(url, {
+        method: meetingId ? "POST" : "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ document: newDoc }),
       });
@@ -257,13 +209,26 @@ export default function DiffPanel({ diff, numberedTranscript, highlightedLines, 
     }
   };
 
-  const hasContent = stdUpdates.length > 0 || checklistState.length > 0 || milestonesState.length > 0 || openIssuesState.length > 0 || nextGoalsState.length > 0;
+  const handleDismiss = async () => {
+    if (!meetingId || !onDismissed) return;
+    setSaving(true); setError(null);
+    try {
+      const res = await fetch(`/api/projects/${projectId}/meetings/${meetingId}/diff/dismiss`, { method: "POST" });
+      if (!res.ok) { const d = await res.json(); throw new Error(d.error ?? "忽略失败"); }
+      toast.success("已忽略本次主文档更新");
+      onDismissed();
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const hasContent = stdUpdates.length > 0 || checklistState.length > 0 || milestonesState.length > 0 || openIssuesState.length > 0;
 
   return (
     <div className="flex flex-col h-full overflow-hidden">
-      <div className="shrink-0 border-b border-lark-border p-4 space-y-3 overflow-y-auto max-h-[60%]">
-        <span className="text-xs font-semibold text-lark-3 uppercase tracking-wide">主文档更新建议</span>
-
+      <div className="flex-1 p-4 space-y-3 overflow-y-auto">
         {!hasContent && <p className="text-sm text-lark-2 py-2">本次会议无需更新主文档</p>}
 
         {/* Standard LLM updates */}
@@ -382,44 +347,22 @@ export default function DiffPanel({ diff, numberedTranscript, highlightedLines, 
           </div>
         )}
 
-        {/* Full listing: Next Meeting Goals */}
-        {nextGoalsState.length > 0 && (
-          <div className="rounded-lg border border-lark-border p-3 space-y-2">
-            <span className="text-xs font-semibold text-lark-1">下次会议目标</span>
-            <ul className="space-y-1.5">
-              {nextGoalsState.map((item, i) => (
-                <li key={i} className="flex items-start gap-2 text-xs">
-                  <input type="checkbox"
-                    checked={item.isNew ? item.accepted : item.willComplete}
-                    onChange={e => setNextGoalsState(p => p.map((g, j) => j === i
-                      ? item.isNew ? { ...g, accepted: e.target.checked } : { ...g, willComplete: e.target.checked }
-                      : g))}
-                    className="mt-0.5 rounded border-lark-border accent-lark-blue shrink-0" />
-                  <span className={`leading-relaxed flex-1 ${item.isNew ? "text-lark-blue" : item.willComplete ? "line-through text-lark-3" : "text-lark-1"}`}>
-                    {item.isNew && <span className="text-lark-blue mr-1">+</span>}
-                    {item.goal}
-                  </span>
-                  {!item.isNew && item.set_at && (
-                    <span className="text-lark-3 shrink-0">{item.willComplete ? `✓ ${meetingDate}` : item.set_at}</span>
-                  )}
-                </li>
-              ))}
-            </ul>
-          </div>
-        )}
-
         {error && <p className="text-xs text-lark-danger">{error}</p>}
 
-        <button onClick={handleConfirm} disabled={saving}
-          className="w-full py-2 text-sm font-medium rounded-lg bg-lark-blue text-white hover:bg-lark-blue-hover disabled:opacity-50 disabled:cursor-not-allowed transition-colors">
-          {saving ? "保存中..." : !hasContent ? "返回项目" : "确认写入主文档"}
-        </button>
+        <div className="flex gap-2">
+          <button onClick={handleConfirm} disabled={saving}
+            className="flex-1 py-2 text-sm font-medium rounded-lg bg-lark-blue text-white hover:bg-lark-blue-hover disabled:opacity-50 disabled:cursor-not-allowed transition-colors">
+            {saving ? "保存中..." : !hasContent ? "返回项目" : "确认写入主文档"}
+          </button>
+          {meetingId && onDismissed && hasContent && (
+            <button onClick={handleDismiss} disabled={saving}
+              className="px-4 py-2 text-sm font-medium rounded-lg border border-lark-border text-lark-2 hover:bg-lark-sunken disabled:opacity-50 disabled:cursor-not-allowed transition-colors">
+              忽略
+            </button>
+          )}
+        </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto p-4 bg-lark-sunken">
-        <p className="text-xs font-semibold text-lark-3 uppercase tracking-wide mb-3">原始记录</p>
-        <TranscriptPanel numberedTranscript={numberedTranscript} highlightedLines={highlightedLines} />
-      </div>
     </div>
   );
 }

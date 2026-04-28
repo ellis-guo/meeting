@@ -5,6 +5,7 @@ import Link from "next/link";
 import { UserButton } from "@clerk/nextjs";
 import { Plus, Settings, FileText, ChevronRight } from "lucide-react";
 import { Project } from "./types";
+import NotificationBell from "./components/NotificationBell";
 
 type StandaloneMeeting = { id: string; created_at: string; date: string | null };
 
@@ -44,6 +45,7 @@ export default function Home() {
             <Plus size={14} />
             新建项目
           </Link>
+          <NotificationBell />
           <UserButton />
         </div>
       </header>

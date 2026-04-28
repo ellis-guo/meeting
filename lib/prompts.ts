@@ -133,10 +133,6 @@ export const MEMORY_INIT_PROMPT = `你是一位专业的项目文档助手，负
 （里程碑，能够把整个项目串起来）date 任务有明确截止日期填 YYYY-MM-DD 否则 null；title 为简短短语；status 根据参考文件判断，默认 pending。
 </field>
 
-<field name="current_progress">
-（当前进度）你正在进行项目初始化，这部分固定填 null，无需归纳。
-</field>
-
 <field name="key_decisions">
 （关键决策）你正在进行项目初始化，这部分固定填 null，无需归纳。
 </field>
@@ -168,7 +164,6 @@ export const MEMORY_INIT_PROMPT = `你是一位专业的项目文档助手，负
   "goals": ["string"],
   "members": [{ "name": "string", "role": "string" }],
   "milestones": [{ "date": "YYYY-MM-DD or null", "title": "string", "status": "done | pending" }],
-  "current_progress": null,
   "key_decisions": [],
   "open_issues": [],
   "glossary": [{ "term": "string", "definition": "string" }],
@@ -183,7 +178,7 @@ export const MEMORY_DIFF_PROMPT = `你是一位专业的项目文档维护助手
 2. 仅基于会议摘要中明确提及的内容提出更新；会议未涉及的字段不出现在 updates 中。
 3. 极度压缩：所有字段内容保持短语级别，与主文档整体风格一致。
 4. 每条更新附 reason，说明依据来自会议的哪部分内容，≤20 字。
-5. key_decisions 新增条目的 date 与 current_progress.as_of 必须使用 context 中提供的会议日期（YYYY-MM-DD），不得使用今日日期。
+5. key_decisions 新增条目的 date 必须使用 context 中提供的会议日期（YYYY-MM-DD），不得使用今日日期。
 </rules>
 
 <fields>
@@ -215,12 +210,6 @@ new 值为完整数组，未完成条目原样保留。
 new 值为完整数组，包含所有条目（含已解决）。
 </field>
 
-<field name="current_progress">
-追加新快照到现有数组，历史条目保留不删除。
-new 值为完整数组：[...现有条目, { "summary": "...", "as_of": "<会议日期>" }]
-as_of 使用会议日期，不用今日日期。
-</field>
-
 <field name="milestones">
 可将已完成里程碑的 status 从 "pending" 改为 "done"，或新增会议中确认的新里程碑。
 new 值为完整数组。
@@ -230,20 +219,13 @@ new 值为完整数组。
 可根据会议内容新增或更新，new 值为完整新值。
 </field>
 
-<field name="next_meeting_goals">
-数组格式，每条含时间戳：{ "goal": "string", "set_at": "YYYY-MM-DD", "completed_at": "YYYY-MM-DD | null" }
-新增目标：set_at 为会议日期，completed_at 为 null。
-完成目标：将对应条目 completed_at 设为会议日期，其余字段不变。
-new 值为完整数组，包含所有条目（含已完成）。若会议无相关内容则不更新此字段。
-</field>
-
 </fields>
 
 <schema>
 {
   "updates": [
     {
-      "field": "overview | goals | members | milestones | current_progress | key_decisions | open_issues | glossary | checklist | next_meeting_goals",
+      "field": "overview | goals | members | milestones | key_decisions | open_issues | risks | glossary | checklist",
       "old": <原值>,
       "new": <新值>,
       "reason": "≤20字，说明依据来自会议哪部分"
@@ -300,7 +282,7 @@ export const ASK_SYSTEM_PROMPT = `你是一位项目助手，帮助用户理解�
    - 进度/状态类 → 分阶段或分维度总结
    - 事实确认类 → 直接回答 + 来源
    - 讨论/决策类 → 列出各方观点 + 结论
-6. 对引用的具体事实或结论，在其后紧跟 [YYYY-MM-DD · 小节标题] 格式的行内来源标注（如 [2026-03-19 · 行动项]）；来源同时在 %%SOURCES%% 后列出供系统索引。
+6. 来源标注须放在**自然段落或独立条目（如 bullet）的末尾**，格式 [YYYY-MM-DD · 小节标题]（如 [2026-03-19 · 行动项]）；同一段落引用多个会议时并列多个标签，例如 [2026-03-19 · 行动项][2026-04-02 · 决策]。**禁止把标注插在句子中间或词中**。来源同时在 %%SOURCES%% 后列出供系统索引。
 7. 以结论性段落收尾，给出明确判断。
 8. 项目主文档是最高优先级的背景知识，应优先用于回答进度、目标、成员、决策类问题。
 

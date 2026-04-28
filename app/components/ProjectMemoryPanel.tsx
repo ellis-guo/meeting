@@ -16,18 +16,16 @@ const KNOWN_LABELS: Record<string, string> = {
   goals: "核心目标",
   members: "成员",
   milestones: "里程碑",
-  current_progress: "当前进度",
   key_decisions: "关键决策",
   open_issues: "待解决问题",
   risks: "风险",
   glossary: "术语表",
   checklist: "需求清单",
-  next_meeting_goals: "下次会议目标",
 };
 
 const FIELD_ORDER = [
-  "overview", "goals", "members", "milestones", "current_progress",
-  "key_decisions", "open_issues", "risks", "glossary", "checklist", "next_meeting_goals",
+  "overview", "goals", "members", "milestones",
+  "key_decisions", "open_issues", "risks", "glossary", "checklist",
 ];
 
 function renderItem(item: unknown): { icon: string | null; text: string; strikethrough?: boolean; meta?: string } {
@@ -53,7 +51,6 @@ function renderItem(item: unknown): { icon: string | null; text: string; striket
       meta: completed ? `已完成 ${completed}` : (o.set_at ? `${o.set_at}` : undefined),
     };
   }
-  if ("summary" in o) return { icon: null, text: String(o.summary), meta: o.as_of ? `截至 ${o.as_of}` : undefined };
   if ("risk" in o) return { icon: null, text: `${o.risk}${o.mitigation ? ` → ${o.mitigation}` : ""}` };
   if ("name" in o && "role" in o) return { icon: null, text: `${o.name} — ${o.role}` };
   if ("term" in o) return { icon: null, text: `${o.term}: ${o.definition}` };
@@ -72,30 +69,6 @@ function FieldValue({ fieldKey, value }: { fieldKey: string; value: unknown }) {
   if (Array.isArray(value)) {
     if (value.length === 0)
       return <span className="text-lark-4 italic text-sm">（空）</span>;
-
-    if (fieldKey === "current_progress") {
-      const entries = value as Array<{ summary: string; as_of: string }>;
-      const latest = entries[entries.length - 1];
-      const history = entries.slice(0, -1).reverse();
-      return (
-        <div className="space-y-1">
-          <p className="text-sm text-lark-1">
-            {latest.summary}{" "}
-            <span className="text-lark-3 text-xs">截至 {latest.as_of}</span>
-          </p>
-          {history.length > 0 && (
-            <details className="text-xs text-lark-3">
-              <summary className="cursor-pointer hover:text-lark-2">历史记录 ({history.length})</summary>
-              <ul className="mt-1 space-y-0.5 pl-2 border-l border-lark-border">
-                {history.map((e, i) => (
-                  <li key={i}>{e.summary} <span className="opacity-60">截至 {e.as_of}</span></li>
-                ))}
-              </ul>
-            </details>
-          )}
-        </div>
-      );
-    }
 
     return (
       <ul className="space-y-1">
@@ -198,10 +171,6 @@ export default function ProjectMemoryPanel({ projectId, memory, onUpdated, initi
     }
   };
 
-  const progressLabel = Array.isArray(memory.current_progress) && memory.current_progress.length > 0
-    ? `— ${memory.current_progress[memory.current_progress.length - 1].summary}`
-    : null;
-
   const keys = sortedKeys(memory);
 
   return (
@@ -212,9 +181,6 @@ export default function ProjectMemoryPanel({ projectId, memory, onUpdated, initi
       >
         <div className="flex items-center gap-2 min-w-0">
           <span className="text-sm font-semibold text-lark-1 shrink-0">项目主文档</span>
-          {progressLabel && (
-            <span className="text-xs text-lark-3 truncate">{progressLabel}</span>
-          )}
         </div>
         <ChevronRight
           size={15}

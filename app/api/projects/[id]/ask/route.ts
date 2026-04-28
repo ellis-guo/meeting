@@ -4,7 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { decryptJSON } from "@/lib/crypto";
 import { getDashScopeKey } from "@/lib/apiKey.server";
 import { extractKeywords } from "@/lib/jieba";
-import { callDashScope, callDashScopeStream, fetchEmbedding } from "@/lib/dashscope";
+import { callDashScope, callDashScopeStream, fetchEmbedding, fetchEmbeddings, FAST_CHAT_MODEL } from "@/lib/dashscope";
 import { extractJSON } from "@/lib/utils";
 import { ASK_SYSTEM_PROMPT, ANALYZE_SYSTEM_PROMPT } from "@/lib/prompts";
 import { Prisma } from "@/app/generated/prisma/client";
@@ -38,6 +38,7 @@ async function analyzeQuery(
       ANALYZE_SYSTEM_PROMPT,
       `当前日期：${today}\n问题：${question}`,
       apiKey,
+      FAST_CHAT_MODEL,
     );
     const parsed = extractJSON(raw) as Record<string, unknown>;
     const intent =
@@ -184,6 +185,21 @@ export async function POST(
     return NextResponse.json({ error: "Project not found" }, { status: 404 });
   }
 
+  // Safety gate: any meeting with diff_status='pending' blocks project-level
+  // questions until the user confirms or dismisses those updates.
+  const pendingDiffCount = await prisma.meeting.count({
+    where: { project_id: projectId, diff_status: "pending" },
+  });
+  if (pendingDiffCount > 0) {
+    return NextResponse.json(
+      {
+        error: `请先处理 ${pendingDiffCount} 条主文档更新建议后再提问`,
+        pending_diff_count: pendingDiffCount,
+      },
+      { status: 409 },
+    );
+  }
+
   const tTotal = Date.now();
   const today = new Date().toISOString().slice(0, 10);
 
@@ -213,11 +229,9 @@ export async function POST(
   const tPhase2 = Date.now();
   const [variantVecs, resolvedDate, resolvedDates, dateMeetingCount] =
     await Promise.all([
-      Promise.all(
-        analysis.queries.map((q) =>
-          fetchEmbedding(q, apiKey).catch(() => null),
-        ),
-      ),
+      analysis.queries.length > 0
+        ? fetchEmbeddings(analysis.queries, apiKey).catch(() => [] as number[][])
+        : Promise.resolve([] as number[][]),
       // Single resolved date: latest one meeting, or explicit YYYY-MM-DD
       analysis.date_filter === "latest" && analysis.meeting_count <= 1
         ? prisma.$queryRaw<[{ d: string | null }]>`
@@ -249,10 +263,7 @@ export async function POST(
     ]);
   const embedVariantsMs = Date.now() - tPhase2;
 
-  const allVecs = [
-    queryVec,
-    ...variantVecs.filter((v): v is number[] => v !== null),
-  ];
+  const allVecs = [queryVec, ...variantVecs];
   const allVecStrs = allVecs.map((v) => `[${v.join(",")}]`);
 
   // Phase 3: intent-based retrieval
@@ -604,56 +615,34 @@ export async function POST(
 
   const userMessage = `${contextParts.join("\n\n===\n\n")}\n\n问题：${question}`;
 
-  // Pre-fetch stats before streaming starts (used in _debug)
-  const [totalChunksRes, embeddedChunksRes, meetingDateRows] =
-    await Promise.all([
-      prisma.$queryRaw<
-        [{ count: bigint }]
-      >`SELECT COUNT(*)::int AS count FROM "Chunk" WHERE project_id = ${projectId}`,
-      prisma.$queryRaw<
-        [{ count: bigint }]
-      >`SELECT COUNT(*)::int AS count FROM "Chunk" WHERE project_id = ${projectId} AND embedding IS NOT NULL`,
-      prisma.$queryRaw<Array<{ meeting_id: string; meeting_date: string }>>`
-      SELECT DISTINCT ON (meeting_date) meeting_id, meeting_date
-      FROM "Chunk"
-      WHERE project_id = ${projectId} AND meeting_date IS NOT NULL
-      ORDER BY meeting_date
-    `,
-    ]);
-  const totalChunks = Number(totalChunksRes[0]?.count ?? 0);
-  const embeddedChunks = Number(embeddedChunksRes[0]?.count ?? 0);
-  // meeting_date → meeting_id index for reliable source resolution
-  const meetingDateIndex = new Map(
-    meetingDateRows.map((r) => [r.meeting_date, r.meeting_id]),
-  );
-
-  const projectMeetingIds = await prisma.meeting.findMany({
-    where: { project_id: projectId },
-    select: { id: true },
-  });
-  const meetingIds = projectMeetingIds.map((m) => m.id);
-  const embeddingLogs =
-    meetingIds.length > 0
-      ? await prisma.processingLog.findMany({
-          where: { meeting_id: { in: meetingIds }, level: "error" },
-          orderBy: { created_at: "desc" },
-          take: 5,
-        })
-      : [];
-  const recentEmbedErrors = embeddingLogs.map((log) => {
-    try {
-      return decryptJSON<Record<string, unknown>>(log.context);
-    } catch {
-      return log.context;
-    }
-  });
-
   const encoder = new TextEncoder();
   const send = (event: string, data: unknown) =>
     encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
 
   const body = new ReadableStream({
     async start(controller) {
+      // Fire stats queries in parallel with LLM stream — meetingDateIndex
+      // is needed when resolving sources after the stream finishes; the rest
+      // are only used in _debug. ProcessingLog uses subquery to avoid a
+      // separate meeting-id round-trip.
+      const statsPromise = Promise.all([
+        prisma.$queryRaw<[{ count: bigint }]>`SELECT COUNT(*)::int AS count FROM "Chunk" WHERE project_id = ${projectId}`,
+        prisma.$queryRaw<[{ count: bigint }]>`SELECT COUNT(*)::int AS count FROM "Chunk" WHERE project_id = ${projectId} AND embedding IS NOT NULL`,
+        prisma.$queryRaw<Array<{ meeting_id: string; meeting_date: string }>>`
+          SELECT DISTINCT ON (meeting_date) meeting_id, meeting_date
+          FROM "Chunk"
+          WHERE project_id = ${projectId} AND meeting_date IS NOT NULL
+          ORDER BY meeting_date
+        `,
+        prisma.$queryRaw<Array<{ context: string }>>`
+          SELECT context FROM "ProcessingLog"
+          WHERE meeting_id IN (SELECT id FROM "Meeting" WHERE project_id = ${projectId})
+            AND level = 'error'
+          ORDER BY created_at DESC
+          LIMIT 5
+        `,
+      ]);
+
       const tAnswer = Date.now();
       let fullText = "";
       try {
@@ -672,6 +661,21 @@ export async function POST(
         return;
       }
       const answerMs = Date.now() - tAnswer;
+
+      const [totalChunksRes, embeddedChunksRes, meetingDateRows, embeddingLogs] =
+        await statsPromise;
+      const totalChunks = Number(totalChunksRes[0]?.count ?? 0);
+      const embeddedChunks = Number(embeddedChunksRes[0]?.count ?? 0);
+      const meetingDateIndex = new Map(
+        meetingDateRows.map((r) => [r.meeting_date, r.meeting_id]),
+      );
+      const recentEmbedErrors = embeddingLogs.map((log) => {
+        try {
+          return decryptJSON<Record<string, unknown>>(log.context);
+        } catch {
+          return log.context;
+        }
+      });
 
       // Parse sources from separator section
       type RawSource = {

@@ -17,7 +17,13 @@ export async function GET(
     include: {
       meetings: {
         orderBy: { created_at: "desc" },
-        select: { id: true, created_at: true, summary: true },
+        select: {
+          id: true,
+          created_at: true,
+          summary: true,
+          processing_status: true,
+          diff_status: true,
+        },
       },
     },
   });
@@ -35,6 +41,26 @@ export async function GET(
       summary: m.summary ? decryptJSON(m.summary) : null,
     })),
   });
+}
+
+export async function PATCH(
+  req: NextRequest,
+  { params }: { params: Promise<{ id: string }> },
+) {
+  const { userId } = await auth();
+  if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+  const { id } = await params;
+  const body = await req.json().catch(() => ({}));
+  const name = typeof body?.name === "string" ? body.name.trim() : "";
+  if (!name) return NextResponse.json({ error: "name is required" }, { status: 400 });
+  if (name.length > 100) return NextResponse.json({ error: "name too long (max 100)" }, { status: 400 });
+
+  const project = await prisma.project.findFirst({ where: { id, user_id: userId } });
+  if (!project) return NextResponse.json({ error: "Project not found" }, { status: 404 });
+
+  await prisma.project.update({ where: { id }, data: { name } });
+  return NextResponse.json({ ok: true, name });
 }
 
 export async function DELETE(

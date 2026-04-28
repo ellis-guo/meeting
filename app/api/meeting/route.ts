@@ -6,6 +6,7 @@ import { encrypt, encryptJSON, decryptJSON } from "@/lib/crypto";
 import { getDashScopeKey } from "@/lib/apiKey.server";
 import { callDashScope, callDashScopeStream } from "@/lib/dashscope";
 import { SUMMARY_SMART_PROMPT, SUMMARY_PROGRESS_PROMPT, MEMORY_DIFF_PROMPT } from "@/lib/prompts";
+import { validateDiff } from "@/lib/projectDocSchema";
 import {
   type SectionContent, type Section, type Summary, type ChunkInput,
   buildSummaryChunks, buildTranscriptChunks, embedAndStore, buildAndStoreParents,
@@ -116,11 +117,11 @@ export async function POST(req: NextRequest) {
   if (!transcript?.trim()) return NextResponse.json({ error: "transcript is required" }, { status: 400 });
   if (transcript.length > 200_000) return NextResponse.json({ error: "transcript too large (max 200KB)" }, { status: 400 });
 
-  let project: { id: string; document: unknown } | null = null;
+  let project: { id: string; name: string; document: unknown } | null = null;
   if (project_id) {
     const raw = await prisma.project.findFirst({ where: { id: project_id, user_id: userId } });
     if (!raw) return NextResponse.json({ error: "Project not found" }, { status: 404 });
-    project = { id: raw.id, document: raw.document ? decryptJSON(raw.document) : {} };
+    project = { id: raw.id, name: raw.name, document: raw.document ? decryptJSON(raw.document) : {} };
   }
 
   const numbered = addLineNumbers(transcript);
@@ -189,24 +190,21 @@ export async function POST(req: NextRequest) {
           controller.enqueue(send("meta", typedSummary.meta));
         }
 
-        // Persist meeting
+        // Persist meeting (initial status: processing)
         const today = new Date().toISOString().slice(0, 10);
         const meetingDate = date || typedSummary.meta.date || today;
         const meeting = await prisma.meeting.create({
-          data: { user_id: userId, transcript: encrypt(transcript), summary: encryptJSON(typedSummary), project_id: project_id ?? null },
+          data: {
+            user_id: userId,
+            transcript: encrypt(transcript),
+            summary: encryptJSON(typedSummary),
+            project_id: project_id ?? null,
+            processing_status: "processing",
+          },
         });
 
-        // Diff (project only)
-        let document_diff: unknown = null;
-        let document_diff_error: string | undefined;
-        if (project) {
-          try {
-            const diffContent = await callDashScope(MEMORY_DIFF_PROMPT, `${langRule}\n\n会议日期：${meetingDate}\n\n当前项目主文档：\n${JSON.stringify(project.document, null, 2)}\n\n本次会议摘要：\n${JSON.stringify(typedSummary, null, 2)}\n\n请输出需要更新的字段及建议内容。`, apiKey);
-            try { document_diff = extractJSON(diffContent); } catch { document_diff = null; }
-          } catch (e) { document_diff_error = String(e); }
-        }
-
-        // Build & save chunks
+        // Build & save chunks (synchronous so the user can rely on summary
+        // sources immediately after `done`)
         const summaryChunkInputs = buildSummaryChunks(typedSummary, meeting.id, project_id);
         const { chunks: transcriptChunkInputs, matchedLines, totalLines } =
           buildTranscriptChunks(transcript, meeting.id, project_id, typedSummary.meta.date ?? undefined);
@@ -222,21 +220,104 @@ export async function POST(req: NextRequest) {
         const createdChunks = await Promise.all(chunksToInsert.map((c) => prisma.chunk.create({ data: { meeting_id: c.meeting_id, project_id: c.project_id, chunk_type: c.chunk_type, content: c.content, search_text: c.search_text, section_title: c.section_title, speaker: c.speaker, line_start: c.line_start, line_end: c.line_end, meeting_date: c.meeting_date } })));
         const chunksWithIds = createdChunks.map((c, i) => ({ ...chunksToInsert[i], id: c.id }));
 
+        // SSE done — diff is no longer in payload (will land asynchronously
+        // into Meeting.document_diff and surface via Notification)
         controller.enqueue(send("done", {
           meeting_id: meeting.id,
           summary,
           numbered_transcript: numbered,
-          document_diff,
-          ...(document_diff_error ? { document_diff_error } : {}),
           chunks_indexed: { summary: summaryChunkInputs.length, transcript: formatOk ? transcriptChunkInputs.length : 0 },
           ...(chunks_warning ? { chunks_warning } : {}),
         }));
 
         controller.close();
+
+        // ── Background tasks (don't depend on SSE connection) ────────────────
         const transcriptWithIds = chunksWithIds.filter(c => c.chunk_type === "transcript");
         embedAndStore(chunksWithIds, meeting.id, apiKey).catch(() => {});
         if (formatOk && transcriptWithIds.length > 0) {
           buildAndStoreParents(transcriptWithIds).catch(() => {});
+        }
+
+        if (project) {
+          // Project meetings: generate diff in background, retry once on
+          // failure, then either persist diff + notify or persist failure +
+          // notify so the user can recover.
+          (async () => {
+            const projectForDiff = project;
+            const diffPrompt = `${langRule}\n\n会议日期：${meetingDate}\n\n当前项目主文档：\n${JSON.stringify(projectForDiff.document, null, 2)}\n\n本次会议摘要：\n${JSON.stringify(typedSummary, null, 2)}\n\n请输出需要更新的字段及建议内容。`;
+
+            // 一次完整尝试 = 调 LLM + extractJSON + schema 校验。
+            // 任一步失败均视作失败，进入下一次重试。
+            const tryGenerate = async (): Promise<unknown> => {
+              const raw = await callDashScope(MEMORY_DIFF_PROMPT, diffPrompt, apiKey);
+              const parsed = extractJSON(raw);
+              const err = validateDiff(parsed);
+              if (err) throw new Error(`Diff schema invalid: ${err}`);
+              return parsed;
+            };
+
+            let document_diff: unknown = null;
+            let lastError: unknown = null;
+            // 总共 3 次尝试：原始 + 2 次重试
+            for (let attempt = 0; attempt < 3; attempt++) {
+              try {
+                document_diff = await tryGenerate();
+                lastError = null;
+                break;
+              } catch (e) {
+                lastError = e;
+                if (attempt < 2) await new Promise((r) => setTimeout(r, 1000));
+              }
+            }
+
+            if (document_diff) {
+              await prisma.meeting.update({
+                where: { id: meeting.id },
+                data: {
+                  document_diff: encryptJSON(document_diff),
+                  diff_status: "pending",
+                  processing_status: "done",
+                },
+              }).catch(() => {});
+              await prisma.notification.create({
+                data: {
+                  user_id: userId,
+                  type: "diff_pending",
+                  title: "主文档更新待处理",
+                  body: `项目「${projectForDiff.name}」生成了新的主文档更新建议，待你确认。`,
+                  link: `/projects/${projectForDiff.id}/meetings/${meeting.id}?diff=1`,
+                },
+              }).catch(() => {});
+            } else {
+              await prisma.meeting.update({
+                where: { id: meeting.id },
+                data: { processing_status: "failed" },
+              }).catch(() => {});
+              await prisma.processingLog.create({
+                data: {
+                  level: "error",
+                  meeting_id: meeting.id,
+                  context: encryptJSON({ type: "diff_generation_failed", error: String(lastError) }),
+                },
+              }).catch(() => {});
+              await prisma.notification.create({
+                data: {
+                  user_id: userId,
+                  type: "diff_failed",
+                  title: "主文档更新生成失败",
+                  body: `项目「${projectForDiff.name}」的会议摘要已保存，但主文档更新建议生成失败，可在会议页重试。`,
+                  link: `/projects/${projectForDiff.id}/meetings/${meeting.id}?diff=1`,
+                },
+              }).catch(() => {});
+            }
+          })();
+        } else {
+          // Standalone meeting: nothing more to do, mark done.
+          prisma.meeting.update({
+            where: { id: meeting.id },
+            data: { processing_status: "done" },
+          }).catch(() => {});
         }
 
       } catch (e) {

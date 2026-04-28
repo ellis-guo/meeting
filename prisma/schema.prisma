@@ -23,16 +23,20 @@ model Project {
 }
 
 model Meeting {
-  id         String   @id @default(uuid())
-  user_id    String
-  project_id String?
-  created_at DateTime @default(now())
-  transcript String
-  summary    String
-  project    Project? @relation(fields: [project_id], references: [id])
-  chunks     Chunk[]
+  id                String   @id @default(uuid())
+  user_id           String
+  project_id        String?
+  created_at        DateTime @default(now())
+  transcript        String
+  summary           String
+  processing_status String   @default("pending") // pending / processing / done / failed
+  document_diff     String?                        // 加密 JSON; 由后台异步任务写入
+  diff_status       String?                        // null / pending / confirmed / dismissed
+  project           Project? @relation(fields: [project_id], references: [id])
+  chunks            Chunk[]
 
   @@index([user_id])
+  @@index([project_id, diff_status])
 }
 
 model ChunkParent {
@@ -72,4 +76,17 @@ model ProcessingLog {
   level      String
   meeting_id String?
   context    String
+}
+
+model Notification {
+  id         String   @id @default(uuid())
+  user_id    String
+  type       String   // diff_pending | (后续可扩展)
+  title      String
+  body       String
+  link       String   // 例: /projects/{pid}/meetings/{mid}
+  read       Boolean  @default(false)
+  created_at DateTime @default(now())
+
+  @@index([user_id, created_at])
 }

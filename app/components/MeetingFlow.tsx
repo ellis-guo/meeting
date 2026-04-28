@@ -7,6 +7,7 @@ import SummaryPanel from "./SummaryPanel";
 import TranscriptPanel from "./TranscriptPanel";
 import DiffPanel from "./DiffPanel";
 import MeetingAskPanel from "./MeetingAskPanel";
+import NotificationBell from "./NotificationBell";
 import { Summary, Section, DocumentDiff, ProjectMemory } from "../types";
 import { addLineNumbers } from "@/lib/utils";
 import { useApiKey } from "@/lib/ApiKeyContext";
@@ -50,12 +51,12 @@ export default function MeetingFlow({ projectId, projectDocument, onDiffConfirme
   const [qaEntered, setQaEntered] = useState(false);
 
   useEffect(() => {
-    if (phase === "complete" && meetingId && !projectId) {
+    if (phase === "complete" && meetingId) {
       setQaVisible(true);
       const t = setTimeout(() => setQaEntered(true), 20);
       return () => clearTimeout(t);
     }
-  }, [phase, meetingId, projectId]);
+  }, [phase, meetingId]);
 
   const handleGenerate = async () => {
     if (!transcriptInput.trim()) return;
@@ -121,7 +122,8 @@ export default function MeetingFlow({ projectId, projectDocument, onDiffConfirme
               setStreamingSections((prev) => [...prev, data as Section]);
             } else if (event === "done") {
               setSummary(data.summary as Summary);
-              setDocumentDiff(data.document_diff ?? null);
+              // document_diff 不再随 SSE 返回，由后台异步生成并落库；
+              // 项目会议在详情页通过 meeting.document_diff 渲染 DiffPanel。
               setMeetingId(data.meeting_id ?? null);
               setChunksWarning(data.chunks_warning ?? null);
               setPhase("complete");
@@ -232,15 +234,6 @@ export default function MeetingFlow({ projectId, projectDocument, onDiffConfirme
             <RotateCcw size={13} />
             重新生成
           </button>
-          {phase === "complete" && meetingId && (
-            <button
-              onClick={() => router.push(projectId ? `/projects/${projectId}/meetings/${meetingId}` : `/meetings/${meetingId}`)}
-              className="flex items-center gap-1 text-sm text-lark-blue hover:underline"
-            >
-              查看详情
-              <ChevronRight size={13} />
-            </button>
-          )}
         </div>
         <div className="flex items-center gap-2">
           {phase === "complete" && (
@@ -265,6 +258,7 @@ export default function MeetingFlow({ projectId, projectDocument, onDiffConfirme
               </button>
             </>
           )}
+          <NotificationBell />
         </div>
       </header>
 
@@ -295,31 +289,19 @@ export default function MeetingFlow({ projectId, projectDocument, onDiffConfirme
           )}
         </div>
 
-        {/* Right: transcript or diff */}
+        {/* Right: transcript （创建流程下不再内嵌 diff，diff 在 meeting 详情页通过浮窗处理） */}
         <div className="w-1/2 print:hidden overflow-hidden">
-          {showDiff ? (
-            <DiffPanel
-              diff={documentDiff}
+          <div className="h-full overflow-y-auto p-6 bg-lark-sunken">
+            <TranscriptPanel
               numberedTranscript={numberedTranscript!}
               highlightedLines={highlightedLines}
-              projectId={projectId!}
-              projectDocument={projectDocument!}
-              meetingDate={dateInput || new Date().toISOString().slice(0, 10)}
-              onConfirmed={onDiffConfirmed ?? (() => {})}
             />
-          ) : (
-            <div className="h-full overflow-y-auto p-6 bg-lark-sunken">
-              <TranscriptPanel
-                numberedTranscript={numberedTranscript!}
-                highlightedLines={highlightedLines}
-              />
-            </div>
-          )}
+          </div>
         </div>
       </div>
 
       {/* Q&A panel */}
-      {qaVisible && meetingId && !projectId && (
+      {qaVisible && meetingId && (
         <div
           className={`transition-all duration-500 ease-out ${
             qaEntered ? "opacity-100 translate-y-0" : "opacity-0 translate-y-6"
