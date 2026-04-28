@@ -2,12 +2,14 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import { ArrowLeft, ChevronRight, Pencil, Printer, RotateCcw, X } from "lucide-react";
 import SummaryPanel from "./SummaryPanel";
 import TranscriptPanel from "./TranscriptPanel";
 import DiffPanel from "./DiffPanel";
 import MeetingAskPanel from "./MeetingAskPanel";
 import { Summary, Section, DocumentDiff, ProjectMemory } from "../types";
 import { addLineNumbers } from "@/lib/utils";
+import { useApiKey } from "@/lib/ApiKeyContext";
 
 type Phase = "idle" | "generating" | "complete";
 type PopupState = { sourceLines: number[]; x: number; y: number } | null;
@@ -22,32 +24,28 @@ interface Props {
 
 export default function MeetingFlow({ projectId, projectDocument, onDiffConfirmed }: Props) {
   const router = useRouter();
+  const { status: keyStatus, promptApiKey } = useApiKey();
 
-  // Input form state
   const [transcriptInput, setTranscriptInput] = useState("");
   const [dateInput, setDateInput] = useState("");
   const [template, setTemplate] = useState<"smart" | "project">("smart");
   const [generateError, setGenerateError] = useState<string | null>(null);
 
-  // Generation phase
   const [phase, setPhase] = useState<Phase>("idle");
   const [streamingSections, setStreamingSections] = useState<Section[]>([]);
   const [streamingMeta, setStreamingMeta] = useState<Meta | null>(null);
 
-  // Result state (set on done)
   const [numberedTranscript, setNumberedTranscript] = useState<string | null>(null);
   const [summary, setSummary] = useState<Summary | null>(null);
   const [documentDiff, setDocumentDiff] = useState<DocumentDiff | null>(null);
   const [meetingId, setMeetingId] = useState<string | null>(null);
   const [chunksWarning, setChunksWarning] = useState<ChunksWarning | null>(null);
 
-  // UI state
   const [isEditing, setIsEditing] = useState(false);
   const [popup, setPopup] = useState<PopupState>(null);
   const [highlightedLines, setHighlightedLines] = useState<number[]>([]);
   const [rechunking, setRechunking] = useState(false);
 
-  // Q&A slide-up animation
   const [qaVisible, setQaVisible] = useState(false);
   const [qaEntered, setQaEntered] = useState(false);
 
@@ -61,8 +59,8 @@ export default function MeetingFlow({ projectId, projectDocument, onDiffConfirme
 
   const handleGenerate = async () => {
     if (!transcriptInput.trim()) return;
+    if (!keyStatus.configured) { promptApiKey(); return; }
 
-    // Immediately show result layout with numbered transcript
     const numbered = addLineNumbers(transcriptInput);
     setNumberedTranscript(numbered);
     setStreamingSections([]);
@@ -147,7 +145,9 @@ export default function MeetingFlow({ projectId, projectDocument, onDiffConfirme
     finally { setRechunking(false); setChunksWarning(null); }
   };
 
-  const reset = () => {
+  const handleReset = () => {
+    if (phase === "generating") return;
+    if (phase === "complete" && !window.confirm("确认重新生成？当前内容将被清除。")) return;
     setPhase("idle");
     setSummary(null);
     setStreamingSections([]);
@@ -164,10 +164,10 @@ export default function MeetingFlow({ projectId, projectDocument, onDiffConfirme
   // ── Idle: input form ──────────────────────────────────────────────────────
   if (phase === "idle") {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-50 dark:bg-zinc-950 p-8">
-        <div className="w-full max-w-2xl space-y-5">
+      <div className="min-h-full flex items-center justify-center bg-lark-canvas p-8">
+        <div className="w-full max-w-2xl space-y-4">
           <textarea
-            className="w-full h-64 p-4 border border-gray-200 dark:border-zinc-700 rounded-lg text-sm text-gray-800 dark:text-gray-200 bg-white dark:bg-zinc-900 resize-none focus:outline-none focus:ring-2 focus:ring-blue-500 placeholder-gray-400 dark:placeholder-gray-600"
+            className="w-full h-64 p-4 border border-lark-border rounded-xl text-sm text-lark-1 bg-lark-surface resize-none focus:outline-none focus:ring-2 focus:ring-lark-blue/40 placeholder:text-lark-4 shadow-card transition-colors"
             placeholder="粘贴会议记录..."
             value={transcriptInput}
             onChange={(e) => setTranscriptInput(e.target.value)}
@@ -179,8 +179,8 @@ export default function MeetingFlow({ projectId, projectDocument, onDiffConfirme
                 onClick={() => setTemplate(t)}
                 className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
                   template === t
-                    ? "bg-blue-600 text-white"
-                    : "bg-white dark:bg-zinc-900 border border-gray-200 dark:border-zinc-700 text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-zinc-800"
+                    ? "bg-lark-blue text-white"
+                    : "bg-lark-surface border border-lark-border text-lark-2 hover:bg-lark-sunken"
                 }`}
               >
                 {t === "smart" ? "智能模板" : "项目进度"}
@@ -188,20 +188,20 @@ export default function MeetingFlow({ projectId, projectDocument, onDiffConfirme
             ))}
           </div>
           <div className="flex items-center gap-3">
-            <label className="text-sm text-gray-500 dark:text-gray-400 shrink-0">会议日期</label>
+            <label className="text-sm text-lark-2 shrink-0">会议日期</label>
             <input
               type="date"
               value={dateInput}
               onChange={(e) => setDateInput(e.target.value)}
               required
-              className="flex-1 px-3 py-2 border border-gray-200 dark:border-zinc-700 rounded-lg text-sm text-gray-800 dark:text-gray-200 bg-white dark:bg-zinc-900 focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="flex-1 px-3 py-2 border border-lark-border rounded-lg text-sm text-lark-1 bg-lark-surface focus:outline-none focus:ring-2 focus:ring-lark-blue/40 transition-colors"
             />
           </div>
-          {generateError && <p className="text-sm text-red-500 dark:text-red-400">{generateError}</p>}
+          {generateError && <p className="text-sm text-lark-danger">{generateError}</p>}
           <button
             onClick={handleGenerate}
             disabled={!transcriptInput.trim() || !dateInput}
-            className="w-full py-3 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            className="w-full py-2.5 bg-lark-blue text-white rounded-lg text-sm font-medium hover:bg-lark-blue-hover disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
           >
             生成总结
           </button>
@@ -211,34 +211,34 @@ export default function MeetingFlow({ projectId, projectDocument, onDiffConfirme
   }
 
   // ── Generating / Complete: result layout ──────────────────────────────────
-  // During generating: show partial sections from streamingSections + streamingMeta
-  // During complete: show full summary
   const displaySummary: Summary = summary ?? {
     meta: streamingMeta ?? { date: null, time: null, participants: [] },
     sections: streamingSections,
     humanistic_note: null,
   };
 
-  // Show DiffPanel on the right only for project meetings after generation is complete
   const showDiff = !!projectId && !!projectDocument && phase === "complete" && !!documentDiff;
 
   return (
-    <div className="h-full flex flex-col bg-white dark:bg-zinc-950">
+    <div className="h-full flex flex-col bg-lark-surface">
       {/* Header */}
-      <header className="flex items-center justify-between px-6 py-3 border-b border-gray-200 dark:border-zinc-800 shrink-0 print:hidden">
+      <header className="flex items-center justify-between px-6 py-3 border-b border-lark-border shrink-0 print:hidden">
         <div className="flex items-center gap-3">
           <button
-            onClick={reset}
-            className="text-sm text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 transition-colors"
+            onClick={handleReset}
+            disabled={phase === "generating"}
+            className="flex items-center gap-1.5 text-sm text-lark-2 hover:text-lark-1 disabled:opacity-40 transition-colors"
           >
-            ← 重新生成
+            <RotateCcw size={13} />
+            重新生成
           </button>
           {phase === "complete" && meetingId && (
             <button
               onClick={() => router.push(projectId ? `/projects/${projectId}/meetings/${meetingId}` : `/meetings/${meetingId}`)}
-              className="text-sm text-blue-600 dark:text-blue-400 hover:underline"
+              className="flex items-center gap-1 text-sm text-lark-blue hover:underline"
             >
-              查看详情 →
+              查看详情
+              <ChevronRight size={13} />
             </button>
           )}
         </div>
@@ -247,19 +247,21 @@ export default function MeetingFlow({ projectId, projectDocument, onDiffConfirme
             <>
               <button
                 onClick={() => { setIsEditing((v) => !v); setPopup(null); }}
-                className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
                   isEditing
-                    ? "bg-blue-600 text-white"
-                    : "border border-gray-200 dark:border-zinc-700 text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-zinc-800"
+                    ? "bg-lark-blue text-white"
+                    : "border border-lark-border text-lark-2 hover:bg-lark-sunken"
                 }`}
               >
+                <Pencil size={13} />
                 {isEditing ? "完成编辑" : "编辑"}
               </button>
               <button
                 onClick={() => window.print()}
-                className="px-3 py-1.5 rounded-lg text-sm font-medium border border-gray-200 dark:border-zinc-700 text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-zinc-800 transition-colors"
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium border border-lark-border text-lark-2 hover:bg-lark-sunken transition-colors"
               >
-                保存为 PDF
+                <Printer size={13} />
+                导出 PDF
               </button>
             </>
           )}
@@ -268,8 +270,8 @@ export default function MeetingFlow({ projectId, projectDocument, onDiffConfirme
 
       {/* Two-pane content */}
       <div className="flex flex-1 overflow-hidden min-h-0">
-        {/* Left: summary (streams in section by section) */}
-        <div className="w-1/2 print:w-full overflow-y-auto border-r border-gray-200 dark:border-zinc-800 print:border-none p-6 print:p-8">
+        {/* Left: summary */}
+        <div className="w-1/2 print:w-full overflow-y-auto border-r border-lark-border print:border-none p-6 print:p-8">
           {displaySummary.sections.length > 0 ? (
             <SummaryPanel
               summary={displaySummary}
@@ -278,24 +280,22 @@ export default function MeetingFlow({ projectId, projectDocument, onDiffConfirme
               onSummaryChange={setSummary}
             />
           ) : (
-            // Nothing yet — show subtle skeleton pulse
-            <div className="space-y-4 animate-pulse">
+            <div className="space-y-3 animate-pulse">
               {[80, 60, 72, 48].map((w, i) => (
-                <div key={i} className={`h-3 rounded bg-gray-100 dark:bg-zinc-800`} style={{ width: `${w}%` }} />
+                <div key={i} className="h-3 rounded bg-lark-border" style={{ width: `${w}%` }} />
               ))}
             </div>
           )}
 
-          {/* Generating indicator — shows below last section while streaming */}
           {phase === "generating" && (
-            <div className="mt-4 flex items-center gap-2 text-xs text-gray-400 dark:text-gray-500">
-              <div className="w-3 h-3 border-2 border-blue-400 border-t-transparent rounded-full animate-spin" />
+            <div className="mt-4 flex items-center gap-2 text-xs text-lark-3">
+              <div className="w-3 h-3 border-2 border-lark-blue border-t-transparent rounded-full animate-spin" />
               AI 正在生成...
             </div>
           )}
         </div>
 
-        {/* Right: transcript (always shown immediately) or diff (after completion for project) */}
+        {/* Right: transcript or diff */}
         <div className="w-1/2 print:hidden overflow-hidden">
           {showDiff ? (
             <DiffPanel
@@ -308,7 +308,7 @@ export default function MeetingFlow({ projectId, projectDocument, onDiffConfirme
               onConfirmed={onDiffConfirmed ?? (() => {})}
             />
           ) : (
-            <div className="h-full overflow-y-auto p-6 bg-gray-50 dark:bg-zinc-900">
+            <div className="h-full overflow-y-auto p-6 bg-lark-sunken">
               <TranscriptPanel
                 numberedTranscript={numberedTranscript!}
                 highlightedLines={highlightedLines}
@@ -318,7 +318,7 @@ export default function MeetingFlow({ projectId, projectDocument, onDiffConfirme
         </div>
       </div>
 
-      {/* Q&A panel — standalone only, slides up when generation completes */}
+      {/* Q&A panel */}
       {qaVisible && meetingId && !projectId && (
         <div
           className={`transition-all duration-500 ease-out ${
@@ -338,16 +338,16 @@ export default function MeetingFlow({ projectId, projectDocument, onDiffConfirme
       {/* Chunks warning dialog */}
       {chunksWarning && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 print:hidden">
-          <div className="bg-white dark:bg-zinc-900 rounded-xl shadow-xl p-6 max-w-sm w-full mx-4">
-            <h2 className="text-sm font-semibold text-gray-900 dark:text-gray-100 mb-2">逐字稿格式识别异常</h2>
-            <p className="text-sm text-gray-600 dark:text-gray-400 mb-5">
+          <div className="bg-lark-surface rounded-xl p-6 max-w-sm w-full mx-4" style={{ boxShadow: "var(--lark-shadow-modal)" }}>
+            <h2 className="text-sm font-semibold text-lark-1 mb-2">逐字稿格式识别异常</h2>
+            <p className="text-sm text-lark-2 mb-5">
               仅识别到 {chunksWarning.matched_lines} / {chunksWarning.total_lines} 行，格式可能不是腾讯会议标准格式。是否使用备用方式切割逐字稿索引？
             </p>
             <div className="flex gap-3 justify-end">
-              <button onClick={() => setChunksWarning(null)} className="px-4 py-2 text-sm text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 transition-colors">
+              <button onClick={() => setChunksWarning(null)} className="px-4 py-2 text-sm text-lark-2 hover:text-lark-1 transition-colors">
                 跳过，不建索引
               </button>
-              <button onClick={handleRechunk} disabled={rechunking} className="px-4 py-2 text-sm font-medium bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors">
+              <button onClick={handleRechunk} disabled={rechunking} className="px-4 py-2 text-sm font-medium bg-lark-blue text-white rounded-lg hover:bg-lark-blue-hover disabled:opacity-50 transition-colors">
                 {rechunking ? "切割中..." : "使用备用切割"}
               </button>
             </div>
@@ -358,12 +358,14 @@ export default function MeetingFlow({ projectId, projectDocument, onDiffConfirme
       {/* Source popup */}
       {popup && !isEditing && (
         <div
-          className="fixed bg-white dark:bg-zinc-900 border border-gray-200 dark:border-zinc-700 rounded-lg shadow-lg p-4 z-50 min-w-44 print:hidden"
-          style={{ left: popup.x, top: Math.min(popup.y, window.innerHeight - 220) }}
+          className="fixed bg-lark-surface border border-lark-border rounded-xl p-4 z-50 min-w-44 print:hidden"
+          style={{ left: popup.x, top: Math.min(popup.y, window.innerHeight - 220), boxShadow: "var(--lark-shadow-modal)" }}
         >
           <div className="flex items-center justify-between mb-3">
-            <span className="text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wide">来源</span>
-            <button onClick={() => setPopup(null)} className="text-gray-400 hover:text-gray-600 text-lg leading-none ml-4">×</button>
+            <span className="text-xs font-semibold text-lark-3 uppercase tracking-wider">来源</span>
+            <button onClick={() => setPopup(null)} className="text-lark-3 hover:text-lark-1 transition-colors ml-4">
+              <X size={14} />
+            </button>
           </div>
           <div className="flex flex-col gap-1.5">
             {popup.sourceLines.map((lineNum, i) => (
@@ -373,7 +375,7 @@ export default function MeetingFlow({ projectId, projectDocument, onDiffConfirme
                   setHighlightedLines([lineNum]);
                   document.getElementById(`line-${lineNum}`)?.scrollIntoView({ behavior: "smooth", block: "center" });
                 }}
-                className="text-left text-sm text-blue-600 dark:text-blue-400 hover:underline"
+                className="text-left text-sm text-lark-blue hover:underline"
               >
                 来源 {i + 1}（第 {lineNum} 行）
               </button>

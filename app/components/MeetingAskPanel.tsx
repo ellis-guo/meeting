@@ -1,6 +1,7 @@
 "use client";
 
 import { Fragment, useRef, useState } from "react";
+import { Send } from "lucide-react";
 
 const SOURCES_SEP = "%%SOURCES%%";
 
@@ -22,9 +23,9 @@ function renderAnswer(text: string): React.ReactNode {
     const h2 = line.match(/^##\s+(.+)/);
     const h3 = line.match(/^###\s+(.+)/);
     const bullet = line.match(/^\*\s+(.+)/);
-    if (h2) return <p key={i} className="text-base font-semibold text-gray-900 dark:text-gray-50 mt-4 mb-0.5">{renderInline(h2[1])}</p>;
-    if (h3) return <p key={i} className="font-medium text-gray-800 dark:text-gray-100 mt-3 mb-0.5">{renderInline(h3[1])}</p>;
-    if (bullet) return <p key={i} className="flex gap-2 pl-2"><span className="shrink-0 text-gray-400">•</span><span>{renderInline(bullet[1])}</span></p>;
+    if (h2) return <p key={i} className="text-base font-semibold text-lark-1 mt-4 mb-0.5">{renderInline(h2[1])}</p>;
+    if (h3) return <p key={i} className="font-medium text-lark-1 mt-3 mb-0.5">{renderInline(h3[1])}</p>;
+    if (bullet) return <p key={i} className="flex gap-2 pl-2"><span className="shrink-0 text-lark-3">•</span><span>{renderInline(bullet[1])}</span></p>;
     if (line === "") return <br key={i} />;
     return <Fragment key={i}>{renderInline(line)}<br /></Fragment>;
   });
@@ -103,7 +104,6 @@ export default function MeetingAskPanel({
     }
   };
 
-  // Strip sources section from display text
   const displayText = rawText !== null
     ? (() => {
         const sepIdx = rawText.indexOf(SOURCES_SEP);
@@ -112,8 +112,8 @@ export default function MeetingAskPanel({
     : null;
 
   return (
-    <div className="border-t border-gray-200 dark:border-zinc-800 p-6 bg-white dark:bg-zinc-950 print:hidden">
-      <h3 className="text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wide mb-3">会议问答</h3>
+    <div className="border-t border-lark-border px-6 py-5 bg-lark-surface print:hidden">
+      <h3 className="text-xs font-semibold text-lark-3 uppercase tracking-wider mb-3">会议问答</h3>
       <div className="space-y-3">
         <div className="flex gap-2 items-end">
           <textarea
@@ -123,32 +123,33 @@ export default function MeetingAskPanel({
             onKeyDown={handleKeyDown}
             placeholder="针对本次会议提问，按 Enter 发送..."
             rows={2}
-            className="flex-1 resize-none rounded-lg border border-gray-200 dark:border-zinc-700 bg-gray-50 dark:bg-zinc-800 px-3 py-2 text-sm text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+            className="flex-1 resize-none rounded-lg border border-lark-border bg-lark-sunken px-3 py-2 text-sm text-lark-1 placeholder:text-lark-4 focus:outline-none focus:ring-1 focus:ring-lark-blue/40 transition-colors"
           />
           <button
             onClick={handleAsk}
             disabled={asking || !question.trim()}
-            className="px-4 py-2 rounded-lg text-sm font-medium bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors shrink-0"
+            className="flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-sm font-medium bg-lark-blue text-white hover:bg-lark-blue-hover disabled:opacity-50 disabled:cursor-not-allowed transition-colors shrink-0"
           >
+            <Send size={13} />
             {asking ? "思考中..." : "提问"}
           </button>
         </div>
 
         {error && (
-          <p className="text-sm text-red-500 dark:text-red-400">{error}</p>
+          <p className="text-sm text-lark-danger">{error}</p>
         )}
 
         {displayText !== null && (
-          <div className="space-y-3 pt-1 border-t border-gray-100 dark:border-zinc-800">
-            <div className="text-sm text-gray-800 dark:text-gray-200 leading-relaxed">
+          <div className="space-y-3 pt-1 border-t border-lark-border">
+            <div className="text-sm text-lark-1 leading-relaxed">
               {renderAnswer(displayText)}
               {asking && (
-                <span className="inline-block w-0.5 h-3.5 ml-0.5 bg-blue-500 animate-pulse align-middle" />
+                <span className="inline-block w-0.5 h-3.5 ml-0.5 bg-lark-blue animate-pulse align-middle" />
               )}
             </div>
             {sources.length > 0 && (
               <div className="space-y-1">
-                <p className="text-xs font-medium text-gray-400 dark:text-gray-500 uppercase tracking-wide">来源</p>
+                <p className="text-xs font-medium text-lark-3 uppercase tracking-wider">来源</p>
                 <div className="flex flex-wrap gap-2">
                   {sources.map((s, i) => {
                     const label = s.section_title ?? s.speaker ?? "片段";
@@ -158,15 +159,15 @@ export default function MeetingAskPanel({
                         key={i}
                         onClick={canClick ? () => { onLineClick!(s.line_start!); } : undefined}
                         disabled={!canClick}
-                        className={`inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs bg-gray-100 dark:bg-zinc-800 text-gray-600 dark:text-gray-400 transition-colors ${
+                        className={`inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs bg-lark-sunken text-lark-2 transition-colors ${
                           canClick
-                            ? "cursor-pointer hover:bg-blue-50 dark:hover:bg-blue-900/30 hover:text-blue-600 dark:hover:text-blue-400"
+                            ? "cursor-pointer hover:bg-lark-blue-light hover:text-lark-blue"
                             : "cursor-default"
                         }`}
                       >
                         {label}
                         {s.line_start != null && (
-                          <span className="text-gray-400 dark:text-gray-500">· 第 {s.line_start} 行</span>
+                          <span className="text-lark-3">· 第 {s.line_start} 行</span>
                         )}
                       </button>
                     );

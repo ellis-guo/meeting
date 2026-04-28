@@ -35,7 +35,7 @@ function EditableSpan({
         const val = e.currentTarget.textContent ?? "";
         if (val !== value) onChange(val);
       }}
-      className={`${className ?? ""} outline-none border-b border-dashed border-blue-300 dark:border-blue-700 focus:border-blue-500 cursor-text`}
+      className={`${className ?? ""} outline-none border-b border-dashed border-lark-blue/50 focus:border-lark-blue cursor-text`}
     >
       {value}
     </span>
@@ -69,7 +69,7 @@ function TraceableText({
   }
   return (
     <span
-      className={`${className ?? ""} underline decoration-dotted decoration-blue-400 cursor-pointer hover:decoration-blue-500 hover:text-blue-700 dark:hover:text-blue-400 transition-colors`}
+      className={`${className ?? ""} underline decoration-dotted decoration-lark-blue/50 cursor-pointer hover:decoration-lark-blue hover:text-lark-blue transition-colors`}
       onClick={(e) => {
         const rect = e.currentTarget.getBoundingClientRect();
         onSourceClick(sourceLines, rect.left, rect.bottom + 4);
@@ -81,7 +81,7 @@ function TraceableText({
 }
 
 function Divider() {
-  return <hr className="border-gray-100 dark:border-zinc-800 my-7" />;
+  return <hr className="border-lark-border my-6" />;
 }
 
 function updateSection(
@@ -112,7 +112,7 @@ function ContentRenderer({
 }) {
   if (content.type === "text") {
     return (
-      <p className="pl-4 text-sm leading-relaxed text-gray-600 dark:text-gray-400">
+      <p className="pl-4 text-sm leading-relaxed text-lark-2">
         <EditableSpan
           value={content.value}
           isEditing={isEditing}
@@ -134,8 +134,8 @@ function ContentRenderer({
       <ul className="pl-4 space-y-3">
         {content.items.map((item, itemIdx) => (
           <li key={itemIdx}>
-            <div className="flex gap-2.5 text-base font-medium leading-relaxed text-gray-800 dark:text-gray-200">
-              <span className="text-gray-400 dark:text-gray-500 mt-0.5 shrink-0 tabular-nums">{itemIdx + 1}.</span>
+            <div className="flex gap-2.5 text-sm font-medium leading-relaxed text-lark-1">
+              <span className="text-lark-3 mt-0.5 shrink-0 tabular-nums">{itemIdx + 1}.</span>
               {item.sub_items && item.sub_items.length > 0 ? (
                 <EditableSpan
                   value={item.text}
@@ -181,9 +181,9 @@ function ContentRenderer({
                 {item.sub_items.map((sub, subIdx) => (
                   <li
                     key={subIdx}
-                    className="flex gap-2 text-sm leading-relaxed text-gray-500 dark:text-gray-400"
+                    className="flex gap-2 text-sm leading-relaxed text-lark-2"
                   >
-                    <span className="text-gray-300 dark:text-gray-600 mt-0.5 shrink-0">◦</span>
+                    <span className="text-lark-4 mt-0.5 shrink-0">◦</span>
                     <TraceableText
                       text={sub.text}
                       sourceLines={sub.source_lines}
@@ -225,11 +225,11 @@ function ContentRenderer({
     return (
       <table className="w-full text-sm border-collapse">
         <thead>
-          <tr className="border-b border-gray-200 dark:border-zinc-700">
+          <tr className="border-b border-lark-border">
             {content.columns.map((col, i) => (
               <th
                 key={i}
-                className="text-left text-xs font-medium text-gray-400 dark:text-gray-500 pb-2 pr-6 last:pr-0"
+                className="text-left text-xs font-medium text-lark-3 pb-2 pr-6 last:pr-0"
               >
                 {col}
               </th>
@@ -240,8 +240,8 @@ function ContentRenderer({
           {content.rows.map((row, rowIdx) => (
             <tr
               key={rowIdx}
-              className={`border-b border-gray-50 dark:border-zinc-900 transition-colors ${
-                isEditing ? "" : "cursor-pointer hover:bg-gray-50 dark:hover:bg-zinc-800/50"
+              className={`border-b border-lark-border/50 transition-colors ${
+                isEditing ? "" : "cursor-pointer hover:bg-lark-sunken"
               }`}
               onClick={
                 isEditing
@@ -257,8 +257,8 @@ function ContentRenderer({
                   key={cellIdx}
                   className={`py-2.5 pr-6 last:pr-0 align-top ${
                     cellIdx === 0
-                      ? "font-medium text-gray-900 dark:text-gray-100"
-                      : "text-gray-600 dark:text-gray-400"
+                      ? "font-medium text-lark-1"
+                      : "text-lark-2"
                   }`}
                 >
                   <EditableSpan
@@ -308,11 +308,11 @@ export default function SummaryPanel({
   const attendees = participants.length > 0 ? participants.join("、") : "—";
 
   return (
-    <div className="text-gray-800 dark:text-gray-200">
+    <div className="text-lark-1">
       {/* Meta */}
-      <div className="mb-8 pb-6 border-b border-gray-100 dark:border-zinc-800 space-y-1.5 text-sm">
+      <div className="mb-7 pb-5 border-b border-lark-border space-y-1.5 text-sm">
         <div className="flex gap-4">
-          <span className="text-gray-400 dark:text-gray-500 shrink-0">会议时间</span>
+          <span className="text-lark-3 shrink-0">会议时间</span>
           <EditableSpan
             value={datetime}
             isEditing={isEditing}
@@ -322,11 +322,11 @@ export default function SummaryPanel({
                 meta: { ...summary.meta, date: val, time: null },
               })
             }
-            className="text-gray-700 dark:text-gray-300"
+            className="text-lark-1"
           />
         </div>
         <div className="flex gap-4">
-          <span className="text-gray-400 dark:text-gray-500 shrink-0">参会人员</span>
+          <span className="text-lark-3 shrink-0">参会人员</span>
           <EditableSpan
             value={attendees}
             isEditing={isEditing}
@@ -339,7 +339,7 @@ export default function SummaryPanel({
                 },
               })
             }
-            className="text-gray-700 dark:text-gray-300"
+            className="text-lark-1"
           />
         </div>
       </div>
@@ -348,7 +348,7 @@ export default function SummaryPanel({
       {summary.sections.map((section, secIdx) => (
         <div key={secIdx}>
           {secIdx > 0 && <Divider />}
-          <h2 className="text-lg font-bold text-gray-900 dark:text-gray-100 mb-4">
+          <h2 className="text-base font-semibold text-lark-1 mb-3">
             <EditableSpan
               value={section.title}
               isEditing={isEditing}
@@ -372,7 +372,7 @@ export default function SummaryPanel({
 
       {/* Humanistic note */}
       {summary.humanistic_note && (
-        <div className="mt-8 p-4 bg-blue-50 dark:bg-blue-950/40 rounded-lg text-sm text-blue-700 dark:text-blue-300 leading-relaxed print:hidden">
+        <div className="mt-7 p-4 bg-lark-blue-light rounded-lg text-sm text-lark-blue leading-relaxed print:hidden">
           <EditableSpan
             value={summary.humanistic_note}
             isEditing={isEditing}

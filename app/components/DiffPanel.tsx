@@ -88,21 +88,21 @@ function renderItem(item: unknown): string {
 
 function ValuePreview({ value }: { value: unknown }) {
   if (value === null || value === undefined || value === "")
-    return <span className="text-gray-400 italic">（空）</span>;
+    return <span className="text-lark-4 italic">（空）</span>;
   if (Array.isArray(value)) {
-    if (value.length === 0) return <span className="text-gray-400 italic">（空）</span>;
+    if (value.length === 0) return <span className="text-lark-4 italic">（空）</span>;
     return (
       <ul className="space-y-1 mt-1">
         {(value as unknown[]).map((item, i) => (
-          <li key={i} className="flex gap-1.5"><span className="text-gray-400 shrink-0">•</span><span>{renderItem(item)}</span></li>
+          <li key={i} className="flex gap-1.5"><span className="text-lark-3 shrink-0">•</span><span>{renderItem(item)}</span></li>
         ))}
       </ul>
     );
   }
   if (typeof value === "object") {
     const o = value as Record<string, unknown>;
-    if ("summary" in o) return <span>{o.summary as string} <span className="text-gray-400 dark:text-gray-500">截至 {o.as_of as string}</span></span>;
-    return <span className="font-mono text-gray-500">{JSON.stringify(value)}</span>;
+    if ("summary" in o) return <span>{o.summary as string} <span className="text-lark-3">截至 {o.as_of as string}</span></span>;
+    return <span className="font-mono text-lark-3">{JSON.stringify(value)}</span>;
   }
   return <span>{String(value)}</span>;
 }
@@ -206,7 +206,6 @@ export default function DiffPanel({ diff, numberedTranscript, highlightedLines, 
   const handleConfirm = async () => {
     const newDoc = { ...projectDocument } as Record<string, unknown>;
 
-    // Standard updates
     stdUpdates.forEach((u, i) => {
       const s = states[i];
       if (isArrayDiff(s)) {
@@ -216,13 +215,9 @@ export default function DiffPanel({ diff, numberedTranscript, highlightedLines, 
       }
     });
 
-    // Checklist
     newDoc.checklist = checklistState;
-
-    // Milestones
     newDoc.milestones = milestonesState;
 
-    // Open issues: keep archived resolved + apply user selections
     const archivedResolved = (Array.isArray(projectDocument.open_issues) ? projectDocument.open_issues : [])
       .map(normalizeOpenIssue).filter(i => !!i.resolved_at);
     newDoc.open_issues = [
@@ -232,7 +227,6 @@ export default function DiffPanel({ diff, numberedTranscript, highlightedLines, 
       ...openIssuesState.filter(i => i.isNew && i.accepted).map(i => ({ issue: i.issue, owner: i.owner, opened_at: meetingDate, resolved_at: null })),
     ];
 
-    // Next meeting goals: keep completed + apply user selections
     const archivedCompleted = (Array.isArray(projectDocument.next_meeting_goals)
       ? projectDocument.next_meeting_goals
       : typeof projectDocument.next_meeting_goals === "string"
@@ -267,37 +261,37 @@ export default function DiffPanel({ diff, numberedTranscript, highlightedLines, 
 
   return (
     <div className="flex flex-col h-full overflow-hidden">
-      <div className="shrink-0 border-b border-gray-200 dark:border-zinc-800 p-4 space-y-3 overflow-y-auto max-h-[60%]">
-        <span className="text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wide">主文档更新建议</span>
+      <div className="shrink-0 border-b border-lark-border p-4 space-y-3 overflow-y-auto max-h-[60%]">
+        <span className="text-xs font-semibold text-lark-3 uppercase tracking-wide">主文档更新建议</span>
 
-        {!hasContent && <p className="text-sm text-gray-500 dark:text-gray-400 py-2">本次会议无需更新主文档</p>}
+        {!hasContent && <p className="text-sm text-lark-2 py-2">本次会议无需更新主文档</p>}
 
-        {/* Standard LLM updates (non-full-listing fields) */}
+        {/* Standard LLM updates */}
         {stdUpdates.map((update, i) => {
           const s = states[i];
           const isArr = isArrayDiff(s);
           const nothingSelected = isArr ? s.deletionChecked.every(Boolean) && s.additionChecked.every(v => !v) : !(s as boolean);
           return (
-            <div key={i} className={`rounded-lg border p-3 space-y-2 transition-colors ${nothingSelected ? "border-gray-100 dark:border-zinc-800 opacity-60" : "border-blue-200 dark:border-blue-800 bg-blue-50/50 dark:bg-blue-950/20"}`}>
+            <div key={i} className={`rounded-lg border p-3 space-y-2 transition-colors ${nothingSelected ? "border-lark-border opacity-60" : "border-lark-blue/30 bg-lark-blue-light/50"}`}>
               {isArr ? (
-                <span className="text-xs font-semibold text-gray-700 dark:text-gray-300">{FIELD_LABELS[update.field] ?? update.field}</span>
+                <span className="text-xs font-semibold text-lark-1">{FIELD_LABELS[update.field] ?? update.field}</span>
               ) : (
                 <label className="flex items-center gap-2 cursor-pointer">
-                  <input type="checkbox" checked={s as boolean} onChange={e => setStates(p => ({ ...p, [i]: e.target.checked }))} className="rounded border-gray-300 text-blue-600" />
-                  <span className="text-xs font-semibold text-gray-700 dark:text-gray-300">{FIELD_LABELS[update.field] ?? update.field}</span>
+                  <input type="checkbox" checked={s as boolean} onChange={e => setStates(p => ({ ...p, [i]: e.target.checked }))} className="rounded border-lark-border accent-lark-blue" />
+                  <span className="text-xs font-semibold text-lark-1">{FIELD_LABELS[update.field] ?? update.field}</span>
                 </label>
               )}
               <div className="pl-2 space-y-1 text-xs">
                 {isArr ? (
                   <ul className="space-y-1.5">
-                    {(s as ArrayDiffState).unchanged.map((item, j) => <li key={`u-${j}`} className="pl-5 text-gray-500 dark:text-gray-400 leading-relaxed">{renderItem(item)}</li>)}
+                    {(s as ArrayDiffState).unchanged.map((item, j) => <li key={`u-${j}`} className="pl-5 text-lark-3 leading-relaxed">{renderItem(item)}</li>)}
                     {(s as ArrayDiffState).deleted.map((item, j) => {
                       const checked = (s as ArrayDiffState).deletionChecked[j];
                       return (
                         <li key={`d-${j}`} className="flex items-start gap-2">
-                          <input type="checkbox" checked={checked} onChange={e => setStates(p => { const c = p[i] as ArrayDiffState; const a = [...c.deletionChecked]; a[j] = e.target.checked; return { ...p, [i]: { ...c, deletionChecked: a } }; })} className="mt-0.5 rounded border-gray-300 text-blue-600 shrink-0" />
-                          <span className={`leading-relaxed ${checked ? "text-gray-700 dark:text-gray-300" : "line-through text-red-400 opacity-70"}`}>{renderItem(item)}</span>
-                          {!checked && <span className="text-red-400 shrink-0">−</span>}
+                          <input type="checkbox" checked={checked} onChange={e => setStates(p => { const c = p[i] as ArrayDiffState; const a = [...c.deletionChecked]; a[j] = e.target.checked; return { ...p, [i]: { ...c, deletionChecked: a } }; })} className="mt-0.5 rounded border-lark-border accent-lark-blue shrink-0" />
+                          <span className={`leading-relaxed ${checked ? "text-lark-1" : "line-through text-lark-danger opacity-70"}`}>{renderItem(item)}</span>
+                          {!checked && <span className="text-lark-danger shrink-0">−</span>}
                         </li>
                       );
                     })}
@@ -305,20 +299,20 @@ export default function DiffPanel({ diff, numberedTranscript, highlightedLines, 
                       const checked = (s as ArrayDiffState).additionChecked[j];
                       return (
                         <li key={`a-${j}`} className="flex items-start gap-2">
-                          <input type="checkbox" checked={checked} onChange={e => setStates(p => { const c = p[i] as ArrayDiffState; const a = [...c.additionChecked]; a[j] = e.target.checked; return { ...p, [i]: { ...c, additionChecked: a } }; })} className="mt-0.5 rounded border-gray-300 text-blue-600 shrink-0" />
-                          <span className={`leading-relaxed ${checked ? "text-blue-700 dark:text-blue-400" : "opacity-40 line-through"}`}>{renderItem(item)}</span>
-                          {checked && <span className="text-blue-500 shrink-0">+</span>}
+                          <input type="checkbox" checked={checked} onChange={e => setStates(p => { const c = p[i] as ArrayDiffState; const a = [...c.additionChecked]; a[j] = e.target.checked; return { ...p, [i]: { ...c, additionChecked: a } }; })} className="mt-0.5 rounded border-lark-border accent-lark-blue shrink-0" />
+                          <span className={`leading-relaxed ${checked ? "text-lark-blue" : "opacity-40 line-through"}`}>{renderItem(item)}</span>
+                          {checked && <span className="text-lark-blue shrink-0">+</span>}
                         </li>
                       );
                     })}
                   </ul>
                 ) : (
                   <>
-                    <div className="text-gray-400 line-through pl-4"><ValuePreview value={update.old} /></div>
-                    <div className="text-gray-800 dark:text-gray-200 pl-4"><ValuePreview value={update.new} /></div>
+                    <div className="text-lark-3 line-through pl-4"><ValuePreview value={update.old} /></div>
+                    <div className="text-lark-1 pl-4"><ValuePreview value={update.new} /></div>
                   </>
                 )}
-                <p className="text-gray-400 dark:text-gray-500 italic pl-4 pt-1">{update.reason}</p>
+                <p className="text-lark-3 italic pl-4 pt-1">{update.reason}</p>
               </div>
             </div>
           );
@@ -326,15 +320,15 @@ export default function DiffPanel({ diff, numberedTranscript, highlightedLines, 
 
         {/* Full listing: Checklist */}
         {checklistState.length > 0 && (
-          <div className="rounded-lg border border-gray-200 dark:border-zinc-700 p-3 space-y-2">
-            <span className="text-xs font-semibold text-gray-700 dark:text-gray-300">需求清单</span>
+          <div className="rounded-lg border border-lark-border p-3 space-y-2">
+            <span className="text-xs font-semibold text-lark-1">需求清单</span>
             <ul className="space-y-1.5">
               {checklistState.map((item, i) => (
                 <li key={i} className="flex items-center gap-2 text-xs">
                   <input type="checkbox" checked={item.status === "done"}
                     onChange={e => setChecklistState(p => p.map((c, j) => j === i ? { ...c, status: e.target.checked ? "done" : "pending" } : c))}
-                    className="rounded border-gray-300 text-blue-600 shrink-0" />
-                  <span className={item.status === "done" ? "line-through text-gray-400" : "text-gray-700 dark:text-gray-300"}>{item.item}</span>
+                    className="rounded border-lark-border accent-lark-blue shrink-0" />
+                  <span className={item.status === "done" ? "line-through text-lark-3" : "text-lark-1"}>{item.item}</span>
                 </li>
               ))}
             </ul>
@@ -343,16 +337,16 @@ export default function DiffPanel({ diff, numberedTranscript, highlightedLines, 
 
         {/* Full listing: Milestones */}
         {milestonesState.length > 0 && (
-          <div className="rounded-lg border border-gray-200 dark:border-zinc-700 p-3 space-y-2">
-            <span className="text-xs font-semibold text-gray-700 dark:text-gray-300">里程碑</span>
+          <div className="rounded-lg border border-lark-border p-3 space-y-2">
+            <span className="text-xs font-semibold text-lark-1">里程碑</span>
             <ul className="space-y-1.5">
               {milestonesState.map((item, i) => (
                 <li key={i} className="flex items-center gap-2 text-xs">
                   <input type="checkbox" checked={item.status === "done"}
                     onChange={e => setMilestonesState(p => p.map((m, j) => j === i ? { ...m, status: e.target.checked ? "done" : "pending" } : m))}
-                    className="rounded border-gray-300 text-blue-600 shrink-0" />
-                  <span className={item.status === "done" ? "line-through text-gray-400" : "text-gray-700 dark:text-gray-300"}>
-                    {item.date && <span className="text-gray-400 mr-1.5">{item.date}</span>}
+                    className="rounded border-lark-border accent-lark-blue shrink-0" />
+                  <span className={item.status === "done" ? "line-through text-lark-3" : "text-lark-1"}>
+                    {item.date && <span className="text-lark-3 mr-1.5">{item.date}</span>}
                     {item.title}
                   </span>
                 </li>
@@ -363,8 +357,8 @@ export default function DiffPanel({ diff, numberedTranscript, highlightedLines, 
 
         {/* Full listing: Open Issues */}
         {openIssuesState.length > 0 && (
-          <div className="rounded-lg border border-gray-200 dark:border-zinc-700 p-3 space-y-2">
-            <span className="text-xs font-semibold text-gray-700 dark:text-gray-300">待解决问题</span>
+          <div className="rounded-lg border border-lark-border p-3 space-y-2">
+            <span className="text-xs font-semibold text-lark-1">待解决问题</span>
             <ul className="space-y-1.5">
               {openIssuesState.map((item, i) => (
                 <li key={i} className="flex items-start gap-2 text-xs">
@@ -373,14 +367,14 @@ export default function DiffPanel({ diff, numberedTranscript, highlightedLines, 
                     onChange={e => setOpenIssuesState(p => p.map((o, j) => j === i
                       ? item.isNew ? { ...o, accepted: e.target.checked } : { ...o, willResolve: e.target.checked }
                       : o))}
-                    className="mt-0.5 rounded border-gray-300 text-blue-600 shrink-0" />
-                  <span className={`leading-relaxed flex-1 ${item.isNew ? "text-blue-700 dark:text-blue-400" : item.willResolve ? "line-through text-gray-400" : "text-gray-700 dark:text-gray-300"}`}>
-                    {item.isNew && <span className="text-blue-500 mr-1 not-italic">+</span>}
+                    className="mt-0.5 rounded border-lark-border accent-lark-blue shrink-0" />
+                  <span className={`leading-relaxed flex-1 ${item.isNew ? "text-lark-blue" : item.willResolve ? "line-through text-lark-3" : "text-lark-1"}`}>
+                    {item.isNew && <span className="text-lark-blue mr-1 not-italic">+</span>}
                     {item.issue}
-                    {item.owner && <span className="text-gray-400 ml-1">({item.owner})</span>}
+                    {item.owner && <span className="text-lark-3 ml-1">({item.owner})</span>}
                   </span>
                   {!item.isNew && (
-                    <span className="text-gray-400 shrink-0">{item.willResolve ? `✓ ${meetingDate}` : item.opened_at ?? ""}</span>
+                    <span className="text-lark-3 shrink-0">{item.willResolve ? `✓ ${meetingDate}` : item.opened_at ?? ""}</span>
                   )}
                 </li>
               ))}
@@ -390,8 +384,8 @@ export default function DiffPanel({ diff, numberedTranscript, highlightedLines, 
 
         {/* Full listing: Next Meeting Goals */}
         {nextGoalsState.length > 0 && (
-          <div className="rounded-lg border border-gray-200 dark:border-zinc-700 p-3 space-y-2">
-            <span className="text-xs font-semibold text-gray-700 dark:text-gray-300">下次会议目标</span>
+          <div className="rounded-lg border border-lark-border p-3 space-y-2">
+            <span className="text-xs font-semibold text-lark-1">下次会议目标</span>
             <ul className="space-y-1.5">
               {nextGoalsState.map((item, i) => (
                 <li key={i} className="flex items-start gap-2 text-xs">
@@ -400,13 +394,13 @@ export default function DiffPanel({ diff, numberedTranscript, highlightedLines, 
                     onChange={e => setNextGoalsState(p => p.map((g, j) => j === i
                       ? item.isNew ? { ...g, accepted: e.target.checked } : { ...g, willComplete: e.target.checked }
                       : g))}
-                    className="mt-0.5 rounded border-gray-300 text-blue-600 shrink-0" />
-                  <span className={`leading-relaxed flex-1 ${item.isNew ? "text-blue-700 dark:text-blue-400" : item.willComplete ? "line-through text-gray-400" : "text-gray-700 dark:text-gray-300"}`}>
-                    {item.isNew && <span className="text-blue-500 mr-1">+</span>}
+                    className="mt-0.5 rounded border-lark-border accent-lark-blue shrink-0" />
+                  <span className={`leading-relaxed flex-1 ${item.isNew ? "text-lark-blue" : item.willComplete ? "line-through text-lark-3" : "text-lark-1"}`}>
+                    {item.isNew && <span className="text-lark-blue mr-1">+</span>}
                     {item.goal}
                   </span>
                   {!item.isNew && item.set_at && (
-                    <span className="text-gray-400 shrink-0">{item.willComplete ? `✓ ${meetingDate}` : item.set_at}</span>
+                    <span className="text-lark-3 shrink-0">{item.willComplete ? `✓ ${meetingDate}` : item.set_at}</span>
                   )}
                 </li>
               ))}
@@ -414,16 +408,16 @@ export default function DiffPanel({ diff, numberedTranscript, highlightedLines, 
           </div>
         )}
 
-        {error && <p className="text-xs text-red-500">{error}</p>}
+        {error && <p className="text-xs text-lark-danger">{error}</p>}
 
         <button onClick={handleConfirm} disabled={saving}
-          className="w-full py-2 text-sm font-medium rounded-lg bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors">
+          className="w-full py-2 text-sm font-medium rounded-lg bg-lark-blue text-white hover:bg-lark-blue-hover disabled:opacity-50 disabled:cursor-not-allowed transition-colors">
           {saving ? "保存中..." : !hasContent ? "返回项目" : "确认写入主文档"}
         </button>
       </div>
 
-      <div className="flex-1 overflow-y-auto p-4 bg-gray-50 dark:bg-zinc-900">
-        <p className="text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wide mb-3">原始记录</p>
+      <div className="flex-1 overflow-y-auto p-4 bg-lark-sunken">
+        <p className="text-xs font-semibold text-lark-3 uppercase tracking-wide mb-3">原始记录</p>
         <TranscriptPanel numberedTranscript={numberedTranscript} highlightedLines={highlightedLines} />
       </div>
     </div>

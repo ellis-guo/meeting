@@ -8,6 +8,9 @@ type KeyStatus = { configured: boolean; expiresAt: Date | null };
 type ApiKeyContextValue = {
   status: KeyStatus;
   loading: boolean;
+  modalOpen: boolean;
+  promptApiKey: () => void;
+  closeModal: () => void;
   setApiKey: (key: string) => Promise<void>;
   clearKey: () => Promise<void>;
 };
@@ -18,11 +21,12 @@ export function ApiKeyProvider({ children }: { children: ReactNode }) {
   const { isLoaded, userId } = useAuth();
   const [status, setStatus] = useState<KeyStatus>({ configured: false, expiresAt: null });
   const [loading, setLoading] = useState(true);
+  const [modalOpen, setModalOpen] = useState(false);
 
   useEffect(() => {
-    if (!isLoaded) return; // 等 Clerk 初始化完成
+    if (!isLoaded) return;
     if (!userId) {
-      setLoading(false); // 未登录，不发请求
+      setLoading(false);
       return;
     }
 
@@ -54,6 +58,7 @@ export function ApiKeyProvider({ children }: { children: ReactNode }) {
       configured: true,
       expiresAt: data.expiresAt ? new Date(data.expiresAt) : null,
     });
+    setModalOpen(false);
   };
 
   const clearKey = async () => {
@@ -61,10 +66,16 @@ export function ApiKeyProvider({ children }: { children: ReactNode }) {
     setStatus({ configured: false, expiresAt: null });
   };
 
-  if (loading) return null;
-
   return (
-    <ApiKeyContext.Provider value={{ status, loading, setApiKey, clearKey }}>
+    <ApiKeyContext.Provider value={{
+      status,
+      loading,
+      modalOpen,
+      promptApiKey: () => setModalOpen(true),
+      closeModal: () => setModalOpen(false),
+      setApiKey,
+      clearKey,
+    }}>
       {children}
     </ApiKeyContext.Provider>
   );

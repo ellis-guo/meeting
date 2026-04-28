@@ -1,18 +1,20 @@
 import MeetingFlow from "@/app/components/MeetingFlow";
 import Link from "next/link";
+import { ArrowLeft } from "lucide-react";
 
 export default function StandaloneMeetingPage() {
   return (
     <div className="h-screen flex flex-col">
-      <div className="px-6 py-3 border-b border-gray-200 dark:border-zinc-800 bg-white dark:bg-zinc-950 shrink-0 print:hidden flex items-center gap-3">
+      <div className="px-6 py-3.5 border-b border-lark-border bg-lark-surface shrink-0 print:hidden flex items-center gap-3">
         <Link
           href="/"
-          className="text-sm text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 transition-colors"
+          className="flex items-center gap-1.5 text-sm text-lark-2 hover:text-lark-1 transition-colors"
         >
-          ← 首页
+          <ArrowLeft size={14} />
+          首页
         </Link>
-        <span className="text-gray-200 dark:text-zinc-700">|</span>
-        <span className="text-sm text-gray-600 dark:text-gray-400">独立会议</span>
+        <span className="text-lark-border">|</span>
+        <span className="text-sm text-lark-2">独立会议</span>
       </div>
       <div className="flex-1 overflow-hidden">
         <MeetingFlow />

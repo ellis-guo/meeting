@@ -1,28 +1,86 @@
 @import "tailwindcss";
 
+/* ─── Feishu (Lark) Design Tokens ─────────────────────────────── */
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
-
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  /* Neutral scale — from feishu.cn CSS variables */
+  --lark-canvas:        #F5F6F7;   /* page background */
+  --lark-surface:       #FFFFFF;   /* card / panel */
+  --lark-sunken:        #F2F3F5;   /* inner area (transcript, input bg) */
+  --lark-border:        #DEE0E3;   /* all borders */
+  --lark-text-1:        #1F2329;   /* primary text */
+  --lark-text-2:        #646A73;   /* secondary text */
+  --lark-text-3:        #8F959E;   /* tertiary / label */
+  --lark-text-4:        #BBBFC4;   /* placeholder / disabled */
+  /* Blue scale */
+  --lark-blue:          #3370FF;   /* primary action */
+  --lark-blue-hover:    #245BDB;   /* button hover */
+  --lark-blue-light:    #F0F4FF;   /* subtle blue bg */
+  --lark-blue-text:     #3370FF;   /* blue text */
+  /* Semantic */
+  --lark-danger:        #E03D30;
+  --lark-danger-hover:  #C52D21;
+  --lark-danger-light:  #FFF0EE;
+  --lark-success:       #10B981;
+  /* Shadows */
+  --lark-shadow-card:       0 1px 3px rgba(31, 35, 41, 0.08), 0 0 0 1px rgba(31, 35, 41, 0.05);
+  --lark-shadow-card-hover: 0 4px 12px rgba(31, 35, 41, 0.12), 0 0 0 1px rgba(51, 112, 255, 0.28);
+  --lark-shadow-modal:      0 8px 32px rgba(31, 35, 41, 0.14);
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+    --lark-canvas:        #0F1117;
+    --lark-surface:       #1A1D23;
+    --lark-sunken:        #13161C;
+    --lark-border:        #2A2D35;
+    --lark-text-1:        #E6EAF2;
+    --lark-text-2:        #8D95A3;
+    --lark-text-3:        #525B6A;
+    --lark-text-4:        #363C47;
+    --lark-blue:          #4D7EFF;
+    --lark-blue-hover:    #3D6FEF;
+    --lark-blue-light:    #1A2240;
+    --lark-blue-text:     #6698FF;
+    --lark-danger:        #F5483B;
+    --lark-danger-hover:  #E03D30;
+    --lark-danger-light:  #2D1210;
+    --lark-success:       #34D399;
+    --lark-shadow-card:       0 1px 3px rgba(0, 0, 0, 0.28);
+    --lark-shadow-card-hover: 0 4px 12px rgba(0, 0, 0, 0.40), 0 0 0 1px rgba(77, 126, 255, 0.3);
+    --lark-shadow-modal:      0 8px 32px rgba(0, 0, 0, 0.50);
   }
 }
 
+@theme inline {
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+
+  --color-lark-canvas:        var(--lark-canvas);
+  --color-lark-surface:       var(--lark-surface);
+  --color-lark-sunken:        var(--lark-sunken);
+  --color-lark-border:        var(--lark-border);
+  --color-lark-1:             var(--lark-text-1);
+  --color-lark-2:             var(--lark-text-2);
+  --color-lark-3:             var(--lark-text-3);
+  --color-lark-4:             var(--lark-text-4);
+  --color-lark-blue:          var(--lark-blue);
+  --color-lark-blue-hover:    var(--lark-blue-hover);
+  --color-lark-blue-light:    var(--lark-blue-light);
+  --color-lark-blue-text:     var(--lark-blue-text);
+  --color-lark-danger:        var(--lark-danger);
+  --color-lark-danger-hover:  var(--lark-danger-hover);
+  --color-lark-danger-light:  var(--lark-danger-light);
+  --color-lark-success:       var(--lark-success);
+
+  --shadow-card:       var(--lark-shadow-card);
+  --shadow-card-hover: var(--lark-shadow-card-hover);
+  --shadow-modal:      var(--lark-shadow-modal);
+}
+
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background: var(--lark-canvas);
+  color: var(--lark-text-1);
+  font-family: var(--font-geist-sans), Arial, Helvetica, sans-serif;
 }
 
 @media print {
@@ -32,22 +90,16 @@ body {
     background: white !important;
     color: black !important;
   }
-
-  .h-screen {
-    height: auto !important;
-  }
-
+  .h-screen { height: auto !important; }
   .overflow-y-auto {
     overflow: visible !important;
     height: auto !important;
     max-height: none !important;
   }
-
   span {
     text-decoration: none !important;
     cursor: default !important;
   }
-
   @page {
     size: A4;
     margin: 20mm;

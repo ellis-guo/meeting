@@ -4,6 +4,7 @@ import { Fragment, useEffect, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { toast } from "sonner";
+import { ArrowLeft, ChevronRight, Plus, RefreshCw, Send, Trash2 } from "lucide-react";
 import { Project } from "@/app/types";
 import ProjectMemoryPanel from "@/app/components/ProjectMemoryPanel";
 
@@ -30,12 +31,11 @@ function renderInline(text: string, resolve?: CitationResolver): React.ReactNode
       if (m) {
         const href = resolve(m[1], m[2].trim());
         return href
-          ? <a key={i} href={href} target="_blank" rel="noopener noreferrer" className="underline decoration-gray-400 dark:decoration-gray-600 text-gray-500 dark:text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 transition-colors text-xs">{part}</a>
-          : <span key={i} className="text-gray-400 dark:text-gray-500 text-xs">{part}</span>;
+          ? <a key={i} href={href} target="_blank" rel="noopener noreferrer" className="underline decoration-lark-border text-lark-3 hover:text-lark-blue transition-colors text-xs">{part}</a>
+          : <span key={i} className="text-lark-4 text-xs">{part}</span>;
       }
-      // Non-date citation like [project_document · field] — render as muted label
       if (/^\[[^\]]+·[^\]]+\]$/.test(part)) {
-        return <span key={i} className="text-gray-400 dark:text-gray-500 text-xs">{part}</span>;
+        return <span key={i} className="text-lark-4 text-xs">{part}</span>;
       }
     }
     return part;
@@ -43,7 +43,6 @@ function renderInline(text: string, resolve?: CitationResolver): React.ReactNode
 }
 
 function renderAnswer(text: string, resolve?: CitationResolver): React.ReactNode {
-  // Merge bare bullet markers (lines that are just "•" or "*") with the following line
   const rawLines = text.split("\n");
   const lines: string[] = [];
   for (let i = 0; i < rawLines.length; i++) {
@@ -59,9 +58,9 @@ function renderAnswer(text: string, resolve?: CitationResolver): React.ReactNode
     const h2 = line.match(/^##\s+(.+)/);
     const h3 = line.match(/^###\s+(.+)/);
     const bullet = line.match(/^[*•]\s+(.+)/);
-    if (h2) return <p key={i} className="text-base font-semibold text-gray-900 dark:text-gray-50 mt-4 mb-0.5">{renderInline(h2[1], resolve)}</p>;
-    if (h3) return <p key={i} className="font-medium text-gray-800 dark:text-gray-100 mt-3 mb-0.5">{renderInline(h3[1], resolve)}</p>;
-    if (bullet) return <p key={i} className="flex gap-2 pl-2"><span className="shrink-0 text-gray-400">•</span><span>{renderInline(bullet[1], resolve)}</span></p>;
+    if (h2) return <p key={i} className="text-base font-semibold text-lark-1 mt-4 mb-0.5">{renderInline(h2[1], resolve)}</p>;
+    if (h3) return <p key={i} className="font-medium text-lark-1 mt-3 mb-0.5">{renderInline(h3[1], resolve)}</p>;
+    if (bullet) return <p key={i} className="flex gap-2 pl-2"><span className="shrink-0 text-lark-3">•</span><span>{renderInline(bullet[1], resolve)}</span></p>;
     if (line === "") return <br key={i} />;
     return <Fragment key={i}>{renderInline(line, resolve)}<br /></Fragment>;
   });
@@ -113,10 +112,7 @@ function ProjectAskPanel({ projectId }: { projectId: string }) {
         return;
       }
 
-      if (!res.body) {
-        setError("请求失败");
-        return;
-      }
+      if (!res.body) { setError("请求失败"); return; }
 
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
@@ -169,8 +165,8 @@ function ProjectAskPanel({ projectId }: { projectId: string }) {
 
   return (
     <section className="space-y-3">
-      <h2 className="text-sm font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wide">项目问答</h2>
-      <div className="rounded-xl border border-gray-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 p-4 space-y-3">
+      <h2 className="text-xs font-semibold text-lark-3 uppercase tracking-wider">项目问答</h2>
+      <div className="rounded-xl border border-lark-border bg-lark-surface shadow-card p-4 space-y-3">
         <div className="flex gap-2 items-end">
           <textarea
             ref={textareaRef}
@@ -179,39 +175,38 @@ function ProjectAskPanel({ projectId }: { projectId: string }) {
             onKeyDown={handleKeyDown}
             placeholder="针对整个项目历史提问，按 Enter 发送..."
             rows={2}
-            className="flex-1 resize-none rounded-lg border border-gray-200 dark:border-zinc-700 bg-gray-50 dark:bg-zinc-800 px-3 py-2 text-sm text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+            className="flex-1 resize-none rounded-lg border border-lark-border bg-lark-sunken px-3 py-2 text-sm text-lark-1 placeholder:text-lark-4 focus:outline-none focus:ring-1 focus:ring-lark-blue/40 transition-colors"
           />
           <button
             onClick={handleAsk}
             disabled={asking || !question.trim()}
-            className="px-4 py-2 rounded-lg text-sm font-medium bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors shrink-0"
+            className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium bg-lark-blue text-white hover:bg-lark-blue-hover disabled:opacity-50 disabled:cursor-not-allowed transition-colors shrink-0"
           >
+            <Send size={13} />
             {asking ? "思考中..." : "提问"}
           </button>
         </div>
 
-        {error && (
-          <p className="text-sm text-red-500 dark:text-red-400">{error}</p>
-        )}
+        {error && <p className="text-sm text-lark-danger">{error}</p>}
 
         {displayText !== null && (
-          <div className="pt-1 border-t border-gray-100 dark:border-zinc-800">
-            <div className="text-sm text-gray-800 dark:text-gray-200 leading-relaxed">
+          <div className="pt-1 border-t border-lark-border">
+            <div className="text-sm text-lark-1 leading-relaxed">
               {renderAnswer(displayText, (date, section) => {
                 const s = sources.find(src => src.meeting_date === date && src.section_title?.trim() === section);
                 return s?.meeting_id ? `/projects/${projectId}/meetings/${s.meeting_id}` : null;
               })}
               {asking && (
-                <span className="inline-block w-0.5 h-3.5 ml-0.5 bg-blue-500 animate-pulse align-middle" />
+                <span className="inline-block w-0.5 h-3.5 ml-0.5 bg-lark-blue animate-pulse align-middle" />
               )}
             </div>
             {!asking && debug && (
               <div className="flex justify-end mt-2">
                 <button
                   onClick={handleDownloadDebug}
-                  className="text-xs text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
+                  className="text-xs text-lark-3 hover:text-lark-2 transition-colors"
                 >
-                  ↓ 下载 Debug
+                  下载 Debug
                 </button>
               </div>
             )}
@@ -230,13 +225,13 @@ function MeetingCard({ meeting, projectId }: { meeting: { id: string; created_at
   return (
     <Link
       href={`/projects/${projectId}/meetings/${meeting.id}`}
-      className="flex items-center justify-between px-5 py-4 rounded-xl border border-gray-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 hover:border-blue-300 dark:hover:border-blue-700 hover:shadow-sm transition-all"
+      className="flex items-center justify-between px-5 py-4 rounded-xl border border-lark-border bg-lark-surface shadow-card hover:shadow-card-hover transition-all"
     >
       <div className="space-y-0.5">
-        <div className="text-sm font-medium text-gray-900 dark:text-gray-100">{date}</div>
-        <div className="text-xs text-gray-400 dark:text-gray-500">{participants}</div>
+        <div className="text-sm font-medium text-lark-1">{date}</div>
+        <div className="text-xs text-lark-3">{participants}</div>
       </div>
-      <span className="text-gray-300 dark:text-gray-600 text-sm">→</span>
+      <ChevronRight size={15} className="text-lark-4 shrink-0" />
     </Link>
   );
 }
@@ -293,76 +288,79 @@ export default function ProjectDetailPage() {
 
   if (loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-50 dark:bg-zinc-950">
-        <p className="text-sm text-gray-400">加载中...</p>
+      <div className="min-h-screen flex items-center justify-center bg-lark-canvas">
+        <p className="text-sm text-lark-3">加载中...</p>
       </div>
     );
   }
 
   if (notFound || !project) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-50 dark:bg-zinc-950 space-y-4 flex-col">
-        <p className="text-sm text-gray-500">项目不存在</p>
-        <Link href="/" className="text-sm text-blue-600 hover:underline">← 返回首页</Link>
+      <div className="min-h-screen flex items-center justify-center bg-lark-canvas flex-col gap-4">
+        <p className="text-sm text-lark-2">项目不存在</p>
+        <Link href="/" className="text-sm text-lark-blue hover:underline">返回首页</Link>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-gray-50 dark:bg-zinc-950">
-      <header className="px-8 py-5 border-b border-gray-200 dark:border-zinc-800 bg-white dark:bg-zinc-950 flex items-center justify-between">
+    <div className="min-h-screen bg-lark-canvas">
+      <header className="px-8 py-4 border-b border-lark-border bg-lark-surface flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <Link href="/" className="text-sm text-gray-500 hover:text-gray-700 dark:hover:text-gray-200 transition-colors">← 首页</Link>
-          <span className="text-gray-200 dark:text-zinc-700">|</span>
-          <span className="text-sm font-semibold text-gray-900 dark:text-gray-100">{project.name}</span>
+          <Link href="/" className="flex items-center gap-1.5 text-sm text-lark-2 hover:text-lark-1 transition-colors">
+            <ArrowLeft size={14} />
+            首页
+          </Link>
+          <span className="text-lark-border">|</span>
+          <span className="text-sm font-semibold text-lark-1">{project.name}</span>
         </div>
         <div className="flex items-center gap-2">
-        <button
-          onClick={handleReembed}
-          disabled={reembedding}
-          className="px-3 py-1.5 rounded-lg text-sm font-medium border border-gray-200 dark:border-zinc-700 text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-zinc-800 disabled:opacity-50 transition-colors"
-        >
-          {reembedding ? "向量化中..." : "重新向量化"}
-        </button>
-        <button
-          onClick={handleDeleteProject}
-          disabled={deleting}
-          className="px-3 py-1.5 rounded-lg text-sm font-medium border border-red-200 dark:border-red-900 text-red-500 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/30 disabled:opacity-50 transition-colors"
-        >
-          {deleting ? "删除中..." : "删除项目"}
-        </button>
-        <button
-          onClick={() => router.push(`/projects/${id}/meetings/new`)}
-          className="px-3 py-1.5 rounded-lg text-sm font-medium bg-blue-600 text-white hover:bg-blue-700 transition-colors"
-        >
-          + 新建会议
-        </button>
+          <button
+            onClick={handleReembed}
+            disabled={reembedding}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium border border-lark-border text-lark-2 hover:bg-lark-sunken disabled:opacity-50 transition-colors"
+          >
+            <RefreshCw size={13} className={reembedding ? "animate-spin" : ""} />
+            {reembedding ? "向量化中..." : "重新向量化"}
+          </button>
+          <button
+            onClick={handleDeleteProject}
+            disabled={deleting}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium border border-lark-danger/30 text-lark-danger hover:bg-lark-danger/5 disabled:opacity-50 transition-colors"
+          >
+            <Trash2 size={13} />
+            {deleting ? "删除中..." : "删除项目"}
+          </button>
+          <button
+            onClick={() => router.push(`/projects/${id}/meetings/new`)}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium bg-lark-blue text-white hover:bg-lark-blue-hover transition-colors"
+          >
+            <Plus size={14} />
+            新建会议
+          </button>
         </div>
       </header>
 
       <main className="max-w-3xl mx-auto px-8 py-8 space-y-6">
-        {/* Project memory */}
         <ProjectMemoryPanel
           projectId={id}
           memory={project.document}
           onUpdated={(updated) => setProject((p) => p ? { ...p, document: updated } : p)}
         />
 
-        {/* Project Q&A */}
         <ProjectAskPanel projectId={id} />
 
-        {/* Meetings */}
         <section className="space-y-3">
-          <h2 className="text-sm font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wide">历史会议</h2>
+          <h2 className="text-xs font-semibold text-lark-3 uppercase tracking-wider">历史会议</h2>
 
           {(!project.meetings || project.meetings.length === 0) && (
-            <div className="rounded-xl border border-dashed border-gray-200 dark:border-zinc-800 p-8 text-center space-y-3">
-              <p className="text-sm text-gray-400">还没有会议记录</p>
+            <div className="rounded-xl border border-dashed border-lark-border p-8 text-center space-y-3">
+              <p className="text-sm text-lark-3">还没有会议记录</p>
               <button
                 onClick={() => router.push(`/projects/${id}/meetings/new`)}
-                className="text-sm text-blue-600 dark:text-blue-400 hover:underline"
+                className="text-sm text-lark-blue hover:underline"
               >
-                开始第一次会议 →
+                开始第一次会议
               </button>
             </div>
           )}

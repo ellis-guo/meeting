@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { toast } from "sonner";
+import { ArrowLeft } from "lucide-react";
 import { useApiKey } from "@/lib/ApiKeyContext";
 
 function formatExpiry(date: Date): string {
@@ -55,6 +56,12 @@ export default function SettingsPage() {
     }
   };
 
+  const handleClearKey = () => {
+    if (!window.confirm("确认清除 API Key？清除后将无法使用 AI 功能，直到重新配置。")) return;
+    clearKey();
+    toast.success("API Key 已清除");
+  };
+
   const handleLangChange = async (next: Lang) => {
     setLang(next);
     setLangSaving(true);
@@ -71,44 +78,45 @@ export default function SettingsPage() {
   };
 
   return (
-    <div className="min-h-screen bg-gray-50 dark:bg-zinc-950">
-      <header className="px-8 py-5 border-b border-gray-200 dark:border-zinc-800 bg-white dark:bg-zinc-950 flex items-center gap-3">
-        <Link href="/" className="text-sm text-gray-500 hover:text-gray-700 dark:hover:text-gray-200 transition-colors">
-          ← 首页
+    <div className="min-h-screen bg-lark-canvas">
+      <header className="px-6 py-4 border-b border-lark-border bg-lark-surface flex items-center gap-3">
+        <Link href="/" className="flex items-center gap-1.5 text-sm text-lark-2 hover:text-lark-1 transition-colors">
+          <ArrowLeft size={14} />
+          首页
         </Link>
-        <span className="text-gray-200 dark:text-zinc-700">|</span>
-        <span className="text-sm font-medium text-gray-900 dark:text-gray-100">设置</span>
+        <span className="text-lark-border">|</span>
+        <span className="text-sm font-medium text-lark-1">设置</span>
       </header>
 
-      <div className="max-w-lg mx-auto px-8 py-10 space-y-6">
+      <div className="max-w-lg mx-auto px-6 py-8 space-y-5">
         {/* API Key section */}
-        <section className="bg-white dark:bg-zinc-900 rounded-xl border border-gray-200 dark:border-zinc-800 p-6 space-y-5">
-          <h2 className="text-sm font-semibold text-gray-900 dark:text-gray-100">DashScope API Key</h2>
+        <section className="bg-lark-surface rounded-xl border border-lark-border shadow-card p-6 space-y-5">
+          <h2 className="text-sm font-semibold text-lark-1">DashScope API Key</h2>
 
           {status.configured ? (
             <div className="space-y-4">
               <div className="flex items-center justify-between">
                 <div className="space-y-0.5">
-                  <p className="text-sm font-mono text-gray-700 dark:text-gray-300">已配置</p>
+                  <p className="text-sm font-mono text-lark-1">已配置</p>
                   {status.expiresAt && (
-                    <p className="text-xs text-gray-400">{formatExpiry(status.expiresAt)}</p>
+                    <p className="text-xs text-lark-3">{formatExpiry(status.expiresAt)}</p>
                   )}
                 </div>
                 <div className="flex items-center gap-3">
                   <button
                     onClick={() => { setChanging(true); setInput(""); setError(""); }}
-                    className="text-sm text-blue-600 dark:text-blue-400 hover:underline"
+                    className="text-sm text-lark-blue hover:underline"
                   >
                     更换
                   </button>
-                  <button onClick={clearKey} className="text-sm text-red-500 dark:text-red-400 hover:underline">
+                  <button onClick={handleClearKey} className="text-sm text-lark-danger hover:underline">
                     清除
                   </button>
                 </div>
               </div>
 
               {changing && (
-                <div className="space-y-2 pt-4 border-t border-gray-100 dark:border-zinc-800">
+                <div className="space-y-2 pt-4 border-t border-lark-border">
                   <input
                     type="password"
                     value={input}
@@ -117,20 +125,20 @@ export default function SettingsPage() {
                     placeholder="输入新的 API Key"
                     autoFocus
                     disabled={saving}
-                    className="w-full px-4 py-2.5 border border-gray-200 dark:border-zinc-700 rounded-lg text-sm bg-white dark:bg-zinc-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500 placeholder-gray-400 font-mono disabled:opacity-60"
+                    className="w-full px-4 py-2.5 border border-lark-border rounded-lg text-sm bg-lark-sunken text-lark-1 focus:outline-none focus:ring-2 focus:ring-lark-blue/40 placeholder:text-lark-4 font-mono disabled:opacity-60"
                   />
-                  {error && <p className="text-xs text-red-500">{error}</p>}
+                  {error && <p className="text-xs text-lark-danger">{error}</p>}
                   <div className="flex gap-2">
                     <button
                       onClick={handleSave}
                       disabled={saving}
-                      className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-50 transition-colors"
+                      className="px-4 py-2 bg-lark-blue text-white rounded-lg text-sm font-medium hover:bg-lark-blue-hover disabled:opacity-50 transition-colors"
                     >
                       {saving ? "保存中..." : "保存"}
                     </button>
                     <button
                       onClick={() => { setChanging(false); setError(""); }}
-                      className="px-4 py-2 text-sm text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 transition-colors"
+                      className="px-4 py-2 text-sm text-lark-2 hover:text-lark-1 transition-colors"
                     >
                       取消
                     </button>
@@ -140,7 +148,7 @@ export default function SettingsPage() {
             </div>
           ) : (
             <div className="space-y-3">
-              <p className="text-sm text-gray-500 dark:text-gray-400">未配置（应用无法使用）</p>
+              <p className="text-sm text-lark-2">未配置（应用无法使用）</p>
               <div className="space-y-2">
                 <input
                   type="password"
@@ -149,13 +157,13 @@ export default function SettingsPage() {
                   onKeyDown={(e) => e.key === "Enter" && !saving && handleSave()}
                   placeholder="输入 DashScope API Key"
                   disabled={saving}
-                  className="w-full px-4 py-2.5 border border-gray-200 dark:border-zinc-700 rounded-lg text-sm bg-white dark:bg-zinc-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500 placeholder-gray-400 font-mono disabled:opacity-60"
+                  className="w-full px-4 py-2.5 border border-lark-border rounded-lg text-sm bg-lark-sunken text-lark-1 focus:outline-none focus:ring-2 focus:ring-lark-blue/40 placeholder:text-lark-4 font-mono disabled:opacity-60"
                 />
-                {error && <p className="text-xs text-red-500">{error}</p>}
+                {error && <p className="text-xs text-lark-danger">{error}</p>}
                 <button
                   onClick={handleSave}
                   disabled={saving || !input.trim()}
-                  className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-50 transition-colors"
+                  className="px-4 py-2 bg-lark-blue text-white rounded-lg text-sm font-medium hover:bg-lark-blue-hover disabled:opacity-50 transition-colors"
                 >
                   {saving ? "保存中..." : "保存"}
                 </button>
@@ -163,8 +171,8 @@ export default function SettingsPage() {
             </div>
           )}
 
-          <div className="pt-4 border-t border-gray-100 dark:border-zinc-800">
-            <p className="text-xs text-gray-400 dark:text-gray-500 leading-relaxed">
+          <div className="pt-4 border-t border-lark-border">
+            <p className="text-xs text-lark-3 leading-relaxed">
               API Key 经 AES-256-GCM 加密后存储在浏览器 HttpOnly Cookie 中，JavaScript
               无法读取。有效期 24 小时后自动清除。Key 不存入开发者数据库，仅在发起
               API 请求时由服务器临时解密调用。
@@ -173,10 +181,10 @@ export default function SettingsPage() {
         </section>
 
         {/* Language preference section */}
-        <section className="bg-white dark:bg-zinc-900 rounded-xl border border-gray-200 dark:border-zinc-800 p-6 space-y-4">
+        <section className="bg-lark-surface rounded-xl border border-lark-border shadow-card p-6 space-y-4">
           <div className="flex items-center justify-between">
-            <h2 className="text-sm font-semibold text-gray-900 dark:text-gray-100">主文档语言偏好</h2>
-            {langSaving && <span className="text-xs text-gray-400">保存中...</span>}
+            <h2 className="text-sm font-semibold text-lark-1">主文档语言偏好</h2>
+            {langSaving && <span className="text-xs text-lark-3">保存中...</span>}
           </div>
 
           <div className="space-y-2">
@@ -185,8 +193,8 @@ export default function SettingsPage() {
                 key={opt.value}
                 className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${
                   lang === opt.value
-                    ? "border-blue-300 dark:border-blue-700 bg-blue-50/50 dark:bg-blue-950/20"
-                    : "border-gray-200 dark:border-zinc-700 hover:border-gray-300 dark:hover:border-zinc-600"
+                    ? "border-lark-blue/40 bg-lark-blue-light"
+                    : "border-lark-border hover:border-lark-border bg-lark-canvas"
                 }`}
               >
                 <input
@@ -195,17 +203,17 @@ export default function SettingsPage() {
                   value={opt.value}
                   checked={lang === opt.value}
                   onChange={() => handleLangChange(opt.value)}
-                  className="mt-0.5 text-blue-600"
+                  className="mt-0.5 accent-[var(--lark-blue)]"
                 />
                 <div>
-                  <p className="text-sm font-medium text-gray-800 dark:text-gray-200">{opt.label}</p>
-                  <p className="text-xs text-gray-400 dark:text-gray-500 mt-0.5">{opt.desc}</p>
+                  <p className="text-sm font-medium text-lark-1">{opt.label}</p>
+                  <p className="text-xs text-lark-3 mt-0.5">{opt.desc}</p>
                 </div>
               </label>
             ))}
           </div>
 
-          <p className="text-xs text-gray-400 dark:text-gray-500 leading-relaxed pt-1 border-t border-gray-100 dark:border-zinc-800">
+          <p className="text-xs text-lark-3 leading-relaxed pt-1 border-t border-lark-border">
             仅影响项目主文档的生成语言。会议摘要仍按转写稿主导语言自动判断。
           </p>
         </section>

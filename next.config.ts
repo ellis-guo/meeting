@@ -12,10 +12,12 @@ const csp = [
   "font-src 'self' data: https://fonts.gstatic.com",
   // Images: self + data URIs (avatars, icons)
   "img-src 'self' data: blob: https:",
+  // Clerk creates Web Workers from blob URLs for auth
+  "worker-src 'self' blob:",
   // XHR/fetch: self + Clerk auth endpoints (includes production custom domain)
   "connect-src 'self' https://clerk.com https://*.clerk.accounts.dev https://api.clerk.com https://*.ellisguo.com",
-  // No plugins, objects, or frames
-  "frame-src 'none'",
+  // Clerk uses Cloudflare Turnstile (iframe) for bot protection
+  "frame-src 'self' https://challenges.cloudflare.com",
   "object-src 'none'",
   "base-uri 'self'",
   "form-action 'self'",
