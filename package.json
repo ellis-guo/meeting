@@ -6,10 +6,12 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "postinstall": "prisma generate"
   },
   "dependencies": {
     "@clerk/nextjs": "^7.2.3",
+    "@prisma/client": "^6.19.3",
     "geist": "^1.7.0",
     "jieba-wasm": "^2.4.0",
     "lucide-react": "^1.11.0",
@@ -20,7 +22,6 @@
     "sonner": "^2.0.7"
   },
   "devDependencies": {
-    "@prisma/client": "^6.19.3",
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
     "@types/react": "^19",
