@@ -10,12 +10,13 @@ export async function getDashScopeKey(): Promise<string | null> {
   const { userId } = await auth();
   const cookieStore = await cookies();
   const encrypted = cookieStore.get(COOKIE_NAME)?.value;
-  if (!encrypted) return null;
-  try {
-    const { key, userId: storedUserId } = decryptJSON<StoredKey>(encrypted);
-    if (storedUserId && storedUserId !== userId) return null;
-    return key ?? null;
-  } catch {
-    return null;
+  if (encrypted) {
+    try {
+      const { key, userId: storedUserId } = decryptJSON<StoredKey>(encrypted);
+      if (!storedUserId || storedUserId === userId) return key ?? null;
+    } catch {
+      // fall through to server key
+    }
   }
+  return process.env.DASHSCOPE_API_KEY ?? null;
 }

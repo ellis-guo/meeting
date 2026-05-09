@@ -38,7 +38,10 @@ export async function GET(req: NextRequest) {
   if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const encrypted = req.cookies.get(COOKIE_NAME)?.value;
-  if (!encrypted) return NextResponse.json({ configured: false });
+  if (!encrypted) {
+    const hasServerKey = !!process.env.DASHSCOPE_API_KEY;
+    return NextResponse.json({ configured: hasServerKey, serverProvided: hasServerKey });
+  }
 
   try {
     const { issuedAt, userId: storedUserId } = decryptJSON<StoredKey>(encrypted);

@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(Get-ChildItem -Path \"E:\\\\cs\\\\MEETING\\\\app\" -Recurse -Directory)",
+      "Bash(Select-Object FullName)",
+      "WebSearch",
+      "WebFetch(domain:docs.anthropic.com)",
+      "WebFetch(domain:platform.openai.com)",
+      "WebFetch(domain:help.openai.com)",
+      "WebFetch(domain:help.aliyun.com)"
+    ]
+  }
+}
