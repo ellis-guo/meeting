@@ -30,7 +30,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const langRule = getLangRule(req);
-  const { name, reference_files = [] } = await req.json();
+  const { name, reference_files = [], no_document = false } = await req.json();
 
   if (!name?.trim()) {
     return NextResponse.json({ error: "name is required" }, { status: 400 });
@@ -51,10 +51,11 @@ export async function POST(req: NextRequest) {
       name: name.trim(),
       reference_files: encryptJSON(reference_files),
       document: encryptJSON({}),
+      no_document: !!no_document,
     },
   });
 
-  if (reference_files.length === 0) {
+  if (no_document || reference_files.length === 0) {
     return NextResponse.json({ project_id: project.id, document_draft: null });
   }
 

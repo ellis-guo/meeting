@@ -17,6 +17,7 @@ model Project {
   created_at      DateTime  @default(now())
   reference_files String    @default("")
   document        String    @default("")
+  no_document     Boolean   @default(false)
   meetings        Meeting[]
 
   @@index([user_id])

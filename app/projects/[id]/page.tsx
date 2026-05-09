@@ -591,11 +591,13 @@ export default function ProjectDetailPage() {
           </button>
         )}
 
-        <ProjectMemoryPanel
-          projectId={id}
-          memory={project.document}
-          onUpdated={(updated) => setProject((p) => p ? { ...p, document: updated } : p)}
-        />
+        {!project.no_document && (
+          <ProjectMemoryPanel
+            projectId={id}
+            memory={project.document}
+            onUpdated={(updated) => setProject((p) => p ? { ...p, document: updated } : p)}
+          />
+        )}
 
         <ProjectAskPanel projectId={id} blocked={pendingMeetings.length > 0} blockedCount={pendingMeetings.length} />
 

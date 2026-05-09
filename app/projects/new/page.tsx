@@ -14,6 +14,7 @@ export default function NewProjectPage() {
   const { status: keyStatus, promptApiKey } = useApiKey();
   const [name, setName] = useState("");
   const [referenceText, setReferenceText] = useState("");
+  const [noDocument, setNoDocument] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -31,7 +32,7 @@ export default function NewProjectPage() {
       const res = await fetch("/api/projects", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: name.trim(), reference_files: referenceFiles }),
+        body: JSON.stringify({ name: name.trim(), reference_files: referenceFiles, no_document: noDocument }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "创建失败");
@@ -148,17 +149,30 @@ export default function NewProjectPage() {
           />
         </div>
 
-        <div className="space-y-2">
-          <label className="text-xs font-semibold text-lark-3 uppercase tracking-wider">
-            参考文件 <span className="font-normal normal-case text-lark-4">（可选）</span>
-          </label>
-          <textarea
-            value={referenceText}
-            onChange={(e) => setReferenceText(e.target.value)}
-            placeholder="粘贴项目介绍、背景文档、需求文档等文本内容，AI 将据此生成初始项目主文档..."
-            className="w-full h-48 px-4 py-3 border border-lark-border rounded-lg text-sm bg-lark-surface text-lark-1 resize-none focus:outline-none focus:ring-2 focus:ring-lark-blue/40 placeholder:text-lark-4 transition-colors"
+        <label className="flex items-center gap-2.5 cursor-pointer select-none">
+          <input
+            type="checkbox"
+            checked={noDocument}
+            onChange={(e) => setNoDocument(e.target.checked)}
+            className="w-4 h-4 rounded accent-lark-blue"
           />
-        </div>
+          <span className="text-sm text-lark-2">不需要项目主文档</span>
+          <span className="text-xs text-lark-4">（适合归档零散会议，无 AI 建议更新）</span>
+        </label>
+
+        {!noDocument && (
+          <div className="space-y-2">
+            <label className="text-xs font-semibold text-lark-3 uppercase tracking-wider">
+              参考文件 <span className="font-normal normal-case text-lark-4">（可选）</span>
+            </label>
+            <textarea
+              value={referenceText}
+              onChange={(e) => setReferenceText(e.target.value)}
+              placeholder="粘贴项目介绍、背景文档、需求文档等文本内容，AI 将据此生成初始项目主文档..."
+              className="w-full h-48 px-4 py-3 border border-lark-border rounded-lg text-sm bg-lark-surface text-lark-1 resize-none focus:outline-none focus:ring-2 focus:ring-lark-blue/40 placeholder:text-lark-4 transition-colors"
+            />
+          </div>
+        )}
 
         {error && <p className="text-sm text-lark-danger">{error}</p>}
 
@@ -167,7 +181,7 @@ export default function NewProjectPage() {
           disabled={loading || !name.trim()}
           className="w-full py-2.5 bg-lark-blue text-white rounded-lg text-sm font-medium hover:bg-lark-blue-hover disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
         >
-          {loading ? (referenceText.trim() ? "AI 生成主文档中..." : "创建中...") : "创建项目"}
+          {loading ? ((!noDocument && referenceText.trim()) ? "AI 生成主文档中..." : "创建中...") : "创建项目"}
         </button>
       </div>
     </div>

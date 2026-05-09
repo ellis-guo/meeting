@@ -117,11 +117,11 @@ export async function POST(req: NextRequest) {
   if (!transcript?.trim()) return NextResponse.json({ error: "transcript is required" }, { status: 400 });
   if (transcript.length > 200_000) return NextResponse.json({ error: "transcript too large (max 200KB)" }, { status: 400 });
 
-  let project: { id: string; name: string; document: unknown } | null = null;
+  let project: { id: string; name: string; document: unknown; no_document: boolean } | null = null;
   if (project_id) {
     const raw = await prisma.project.findFirst({ where: { id: project_id, user_id: userId } });
     if (!raw) return NextResponse.json({ error: "Project not found" }, { status: 404 });
-    project = { id: raw.id, name: raw.name, document: raw.document ? decryptJSON(raw.document) : {} };
+    project = { id: raw.id, name: raw.name, document: raw.document ? decryptJSON(raw.document) : {}, no_document: raw.no_document };
   }
 
   const numbered = addLineNumbers(transcript);
@@ -239,7 +239,7 @@ export async function POST(req: NextRequest) {
           buildAndStoreParents(transcriptWithIds).catch(() => {});
         }
 
-        if (project) {
+        if (project && !project.no_document) {
           // Project meetings: generate diff in background, retry once on
           // failure, then either persist diff + notify or persist failure +
           // notify so the user can recover.

@@ -63,6 +63,7 @@ export type Project = {
   name: string;
   created_at: string;
   document: ProjectMemory;
+  no_document: boolean;
   meetings?: MeetingMeta[];
 };
 
