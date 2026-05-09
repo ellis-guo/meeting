@@ -154,7 +154,7 @@ export async function POST(
     const plainTexts = inputs.map((c) => c.content);
     let vectors: number[][];
     try {
-      vectors = await fetchEmbeddings(plainTexts, apiKey);
+      vectors = (await fetchEmbeddings(plainTexts, apiKey)).embeddings;
     } catch (e) {
       await prisma.processingLog.create({
         data: {

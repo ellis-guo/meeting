@@ -4,7 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { decryptJSON } from "@/lib/crypto";
 import { getDashScopeKey } from "@/lib/apiKey.server";
 import { extractKeywords } from "@/lib/jieba";
-import { callDashScope, callDashScopeStream, fetchEmbedding, fetchEmbeddings, FAST_CHAT_MODEL } from "@/lib/dashscope";
+import { callDashScope, callDashScopeStream, fetchEmbedding, fetchEmbeddings, FAST_CHAT_MODEL, DashScopeUsage } from "@/lib/dashscope";
 import { extractJSON } from "@/lib/utils";
 import { ASK_SYSTEM_PROMPT, ANALYZE_SYSTEM_PROMPT } from "@/lib/prompts";
 import { Prisma } from "@/app/generated/prisma/client";
@@ -32,9 +32,9 @@ async function analyzeQuery(
   question: string,
   apiKey: string,
   today: string,
-): Promise<QueryAnalysis> {
+): Promise<{ result: QueryAnalysis; usage: DashScopeUsage | null }> {
   try {
-    const raw = await callDashScope(
+    const { content: raw, usage } = await callDashScope(
       ANALYZE_SYSTEM_PROMPT,
       `当前日期：${today}\n问题：${question}`,
       apiKey,
@@ -63,9 +63,9 @@ async function analyzeQuery(
       typeof parsed.meeting_count === "number" && parsed.meeting_count >= 1
         ? Math.min(Math.round(parsed.meeting_count), 5)
         : 1;
-    return { queries, intent, speakers, date_filter, meeting_count };
+    return { result: { queries, intent, speakers, date_filter, meeting_count }, usage };
   } catch {
-    return ANALYZE_FALLBACK;
+    return { result: ANALYZE_FALLBACK, usage: null };
   }
 }
 
@@ -208,16 +208,20 @@ export async function POST(
   let analysis: QueryAnalysis;
   let analyzeMs = 0,
     embedOriginalMs = 0;
+  let analyzeUsage: DashScopeUsage | null = null;
+  let embedOriginalUsage: DashScopeUsage | null = null;
   try {
     [[analysis, analyzeMs], [queryVec, embedOriginalMs]] = await Promise.all([
       (async () => {
         const t = Date.now();
-        const r = await analyzeQuery(question, apiKey, today);
-        return [r, Date.now() - t] as [QueryAnalysis, number];
+        const { result, usage } = await analyzeQuery(question, apiKey, today);
+        analyzeUsage = usage;
+        return [result, Date.now() - t] as [QueryAnalysis, number];
       })(),
       (async () => {
         const t = Date.now();
-        const r = await fetchEmbedding(question, apiKey);
+        const { embedding: r, usage } = await fetchEmbedding(question, apiKey);
+        embedOriginalUsage = usage;
         return [r, Date.now() - t] as [number[], number];
       })(),
     ]);
@@ -227,10 +231,13 @@ export async function POST(
 
   // Phase 2: embed rewrite variants + resolve date + date meeting count — parallel
   const tPhase2 = Date.now();
+  let embedVariantsUsage: DashScopeUsage | null = null;
   const [variantVecs, resolvedDate, resolvedDates, dateMeetingCount] =
     await Promise.all([
       analysis.queries.length > 0
-        ? fetchEmbeddings(analysis.queries, apiKey).catch(() => [] as number[][])
+        ? fetchEmbeddings(analysis.queries, apiKey)
+            .then(({ embeddings, usage }) => { embedVariantsUsage = usage; return embeddings; })
+            .catch(() => [] as number[][])
         : Promise.resolve([] as number[][]),
       // Single resolved date: latest one meeting, or explicit YYYY-MM-DD
       analysis.date_filter === "latest" && analysis.meeting_count <= 1
@@ -645,8 +652,9 @@ export async function POST(
 
       const tAnswer = Date.now();
       let fullText = "";
+      let answerUsage: DashScopeUsage | null = null;
       try {
-        fullText = await callDashScopeStream(
+        ({ fullText, usage: answerUsage } = await callDashScopeStream(
           ASK_SYSTEM_PROMPT,
           userMessage,
           apiKey,
@@ -654,7 +662,7 @@ export async function POST(
             controller.enqueue(send("token", { text: token }));
           },
           SOURCES_SEP,
-        );
+        ));
       } catch (e) {
         controller.enqueue(send("error", { error: String(e) }));
         controller.close();
@@ -725,7 +733,24 @@ export async function POST(
         if (t in citationCounts) citationCounts[t]++;
       }
 
+      const sumUsage = (items: (DashScopeUsage | null)[]) => {
+        const valid = items.filter((u): u is DashScopeUsage => u !== null);
+        if (valid.length === 0) return null;
+        return {
+          prompt_tokens: valid.reduce((s, u) => s + u.prompt_tokens, 0),
+          completion_tokens: valid.reduce((s, u) => s + (u.completion_tokens ?? 0), 0),
+          total_tokens: valid.reduce((s, u) => s + u.total_tokens, 0),
+        };
+      };
+
       const _debug = {
+        token_usage: {
+          analyze: analyzeUsage,
+          embed_original: embedOriginalUsage,
+          embed_variants: embedVariantsUsage,
+          answer: answerUsage,
+          total: sumUsage([analyzeUsage, embedOriginalUsage, embedVariantsUsage, answerUsage]),
+        },
         source_citation_summary: citationCounts,
         timings_ms: {
           analyze_llm: analyzeMs,

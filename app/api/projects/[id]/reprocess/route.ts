@@ -41,7 +41,7 @@ export async function POST(
 
   let document_draft: unknown;
   try {
-    const content = await callDashScope(MEMORY_INIT_PROMPT, `项目参考文件：\n\n${fileContent}`, apiKey);
+    const content = (await callDashScope(MEMORY_INIT_PROMPT, `项目参考文件：\n\n${fileContent}`, apiKey)).content;
     document_draft = extractJSON(content);
   } catch {
     return NextResponse.json(

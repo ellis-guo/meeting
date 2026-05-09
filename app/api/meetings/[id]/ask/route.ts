@@ -4,7 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { decrypt, decryptJSON } from "@/lib/crypto";
 import { getDashScopeKey } from "@/lib/apiKey.server";
 import { addLineNumbers, extractJSON } from "@/lib/utils";
-import { callDashScope, callDashScopeStream, fetchEmbedding } from "@/lib/dashscope";
+import { callDashScope, callDashScopeStream, fetchEmbedding, DashScopeUsage } from "@/lib/dashscope";
 import { FULL_TEXT_ASK_PROMPT, RAG_ASK_PROMPT } from "@/lib/prompts";
 import { checkRateLimit } from "@/lib/ratelimit";
 
@@ -82,10 +82,11 @@ export async function POST(
 
           const tAnswer = Date.now();
           let fullText = "";
+          let answerUsage: DashScopeUsage | null = null;
           try {
-            fullText = await callDashScopeStream(FULL_TEXT_ASK_PROMPT, userMessage, apiKey, (token) => {
+            ({ fullText, usage: answerUsage } = await callDashScopeStream(FULL_TEXT_ASK_PROMPT, userMessage, apiKey, (token) => {
               controller.enqueue(send("token", { text: token }));
-            }, SOURCES_SEP);
+            }, SOURCES_SEP));
           } catch (e) {
             controller.enqueue(send("error", { error: String(e) }));
             controller.close();
@@ -107,6 +108,7 @@ export async function POST(
           const _debug = {
             path: "full_text",
             estimated_tokens: estimatedTokens,
+            token_usage: { answer: answerUsage },
             timings_ms: { answer_llm: answerMs, total: Date.now() - tTotal },
           };
 
@@ -116,9 +118,10 @@ export async function POST(
         } else {
           // RAG fallback — kept as-is, emit via SSE for API consistency
           let queryVec: number[];
+          let embedUsage: DashScopeUsage | null = null;
           const tEmbed = Date.now();
           try {
-            queryVec = await fetchEmbedding(question, apiKey);
+            ({ embedding: queryVec, usage: embedUsage } = await fetchEmbedding(question, apiKey));
           } catch (e) {
             controller.enqueue(send("error", { error: String(e) }));
             controller.close();
@@ -156,8 +159,9 @@ export async function POST(
 
           const tAnswer = Date.now();
           let raw_answer: string;
+          let ragAnswerUsage: DashScopeUsage | null = null;
           try {
-            raw_answer = await callDashScope(RAG_ASK_PROMPT, userMessage, apiKey);
+            ({ content: raw_answer, usage: ragAnswerUsage } = await callDashScope(RAG_ASK_PROMPT, userMessage, apiKey));
           } catch (e) {
             controller.enqueue(send("error", { error: String(e) }));
             controller.close();
@@ -179,6 +183,7 @@ export async function POST(
             transcript_hits: hits.length,
             chunks_total: totalChunks,
             chunks_with_embedding: embeddedChunks,
+            token_usage: { embed: embedUsage, answer: ragAnswerUsage },
             timings_ms: { embed: embedMs, retrieval: retrievalMs, answer_llm: answerMs, total: Date.now() - tTotal },
             all_retrieved_chunks: hits.map((c) => ({
               type: c.chunk_type, speaker: c.speaker, section: c.section_title,

@@ -57,11 +57,11 @@ export async function POST(
 
   let diffContent: string;
   try {
-    diffContent = await callDashScope(
+    diffContent = (await callDashScope(
       MEMORY_DIFF_PROMPT,
       `${langRule}\n\n会议日期：${meetingDate}\n\n当前项目主文档：\n${JSON.stringify(projectDocument, null, 2)}\n\n本次会议摘要：\n${JSON.stringify(summary, null, 2)}\n\n请输出需要更新的字段及建议内容。`,
       apiKey,
-    );
+    )).content;
   } catch (e) {
     return NextResponse.json({ error: String(e) }, { status: 502 });
   }

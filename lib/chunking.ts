@@ -145,7 +145,7 @@ export async function embedAndStore(
     const batch = chunks.slice(i, i + BATCH);
     let vectors: number[][];
     try {
-      vectors = await fetchEmbeddings(batch.map((c) => c.content), apiKey);
+      vectors = (await fetchEmbeddings(batch.map((c) => c.content), apiKey)).embeddings;
     } catch (e) {
       await prisma.processingLog.create({
         data: { level: "error", meeting_id: meetingId, context: encryptJSON({ type: "embedding_batch_failed", batch_start: i, detail: String(e) }) },

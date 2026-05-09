@@ -13,7 +13,7 @@ async function generateDocumentFromFiles(
   langRule: string,
 ): Promise<unknown> {
   const fileContent = referenceFiles.join("\n\n---\n\n");
-  const content = await callDashScope(MEMORY_INIT_PROMPT, `${langRule}\n\n项目参考文件：\n\n${fileContent}`, apiKey);
+  const content = (await callDashScope(MEMORY_INIT_PROMPT, `${langRule}\n\n项目参考文件：\n\n${fileContent}`, apiKey)).content;
   return extractJSON(content);
 }
 

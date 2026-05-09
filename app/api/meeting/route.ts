@@ -146,7 +146,7 @@ export async function POST(req: NextRequest) {
         // Stream LLM; after each token that closes a brace, check for newly complete sections/meta
         let summaryContent: string;
         try {
-          summaryContent = await callDashScopeStream(systemPrompt, contextLines, apiKey, (token) => {
+          summaryContent = (await callDashScopeStream(systemPrompt, contextLines, apiKey, (token) => {
             accumulated += token;
             if (!token.includes("}")) return;
 
@@ -160,7 +160,7 @@ export async function POST(req: NextRequest) {
               controller.enqueue(send("section", section));
               emittedSectionCount++;
             }
-          });
+          })).fullText;
         } catch (e) {
           controller.enqueue(send("error", { error: String(e) }));
           controller.close();
@@ -250,7 +250,7 @@ export async function POST(req: NextRequest) {
             // 一次完整尝试 = 调 LLM + extractJSON + schema 校验。
             // 任一步失败均视作失败，进入下一次重试。
             const tryGenerate = async (): Promise<unknown> => {
-              const raw = await callDashScope(MEMORY_DIFF_PROMPT, diffPrompt, apiKey);
+              const raw = (await callDashScope(MEMORY_DIFF_PROMPT, diffPrompt, apiKey)).content;
               const parsed = extractJSON(raw);
               const err = validateDiff(parsed);
               if (err) throw new Error(`Diff schema invalid: ${err}`);

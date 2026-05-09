@@ -7,12 +7,18 @@ export const FAST_CHAT_MODEL = "qwen3.6-flash";
 const EMBED_MODEL = "text-embedding-v3";
 const EMBED_DIM = 1024;
 
+export type DashScopeUsage = {
+  prompt_tokens: number;
+  completion_tokens: number;
+  total_tokens: number;
+};
+
 export async function callDashScope(
   systemPrompt: string,
   userMessage: string,
   apiKey: string,
   model: string = CHAT_MODEL,
-): Promise<string> {
+): Promise<{ content: string; usage: DashScopeUsage | null }> {
   const res = await fetch(CHAT_URL, {
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
@@ -26,7 +32,7 @@ export async function callDashScope(
   const data = await res.json();
   const content = data.choices?.[0]?.message?.content;
   if (!content) throw new Error("Empty response from model");
-  return content;
+  return { content, usage: (data.usage as DashScopeUsage) ?? null };
 }
 
 export async function callDashScopeStream(
@@ -36,7 +42,7 @@ export async function callDashScopeStream(
   onToken: (text: string) => void,
   sep = "",
   model: string = CHAT_MODEL,
-): Promise<string> {
+): Promise<{ fullText: string; usage: DashScopeUsage | null }> {
   const res = await fetch(CHAT_URL, {
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
@@ -57,6 +63,7 @@ export async function callDashScopeStream(
   let safeSent = 0;
   let sepFound = false;
   let jsonMode = false;
+  let lastUsage: DashScopeUsage | null = null;
 
   while (true) {
     const { done, value } = await reader.read();
@@ -69,8 +76,12 @@ export async function callDashScopeStream(
       const payload = line.slice(6).trim();
       if (payload === "[DONE]") continue;
       try {
-        const chunk = (JSON.parse(payload) as { choices?: Array<{ delta?: { content?: string } }> })
-          .choices?.[0]?.delta?.content ?? "";
+        const parsed = JSON.parse(payload) as {
+          choices?: Array<{ delta?: { content?: string } }>;
+          usage?: DashScopeUsage;
+        };
+        if (parsed.usage) lastUsage = parsed.usage;
+        const chunk = parsed.choices?.[0]?.delta?.content ?? "";
         if (!chunk) continue;
         fullText += chunk;
 
@@ -113,19 +124,24 @@ export async function callDashScopeStream(
     }
   }
 
-  return fullText;
+  return { fullText, usage: lastUsage };
 }
 
-export async function fetchEmbeddings(texts: string[], apiKey: string): Promise<number[][]> {
+export async function fetchEmbeddings(texts: string[], apiKey: string): Promise<{ embeddings: number[][]; usage: DashScopeUsage | null }> {
   const res = await fetch(EMBED_URL, {
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
     body: JSON.stringify({ model: EMBED_MODEL, input: texts, dimension: EMBED_DIM }),
   });
   if (!res.ok) throw new Error(`Embedding API error: ${res.status} — ${await res.text()}`);
-  return ((await res.json()).data as Array<{ embedding: number[] }>).map((d) => d.embedding);
+  const json = await res.json();
+  return {
+    embeddings: (json.data as Array<{ embedding: number[] }>).map((d) => d.embedding),
+    usage: (json.usage as DashScopeUsage) ?? null,
+  };
 }
 
-export async function fetchEmbedding(text: string, apiKey: string): Promise<number[]> {
-  return (await fetchEmbeddings([text], apiKey))[0];
+export async function fetchEmbedding(text: string, apiKey: string): Promise<{ embedding: number[]; usage: DashScopeUsage | null }> {
+  const { embeddings, usage } = await fetchEmbeddings([text], apiKey);
+  return { embedding: embeddings[0], usage };
 }
