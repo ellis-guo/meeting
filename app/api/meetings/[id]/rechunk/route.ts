@@ -1,59 +1,31 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@clerk/nextjs/server";
 import { prisma } from "@/lib/prisma";
-import { decrypt, encryptJSON } from "@/lib/crypto";
+import { decrypt, decryptJSON } from "@/lib/crypto";
 import { getDashScopeKey } from "@/lib/apiKey.server";
-import { fetchEmbeddings } from "@/lib/dashscope";
+import {
+  type ChunkInput,
+  type Summary,
+  insertChunks,
+  embedAndStore,
+  buildAndStoreParents,
+} from "@/lib/chunking";
+import { checkRateLimit } from "@/lib/ratelimit";
 
-const PARENT_WINDOW = 5;
-
-async function buildAndStoreParents(transcriptChunks: Array<ChunkInput & { id: string }>, meetingId: string): Promise<void> {
-  for (let i = 0; i < transcriptChunks.length; i += PARENT_WINDOW) {
-    const group = transcriptChunks.slice(i, i + PARENT_WINDOW);
-    const content = group.map(c => c.search_text ?? c.content).join("\n");
-    const uniqueSpeakers = [...new Set(group.flatMap(c => c.speaker ? [c.speaker] : []))];
-    const speakers = uniqueSpeakers.join(" | ") || "未知";
-    const parentId = crypto.randomUUID();
-    const projectId = group[0].project_id ?? null;
-    const meetingDate = group[0].meeting_date ?? null;
-    const lineStart = group[0].line_start ?? null;
-    const lineEnd = group[group.length - 1].line_end ?? null;
-    try {
-      await prisma.$executeRaw`
-        INSERT INTO "ChunkParent" (id, meeting_id, project_id, meeting_date, content, speakers, line_start, line_end)
-        VALUES (${parentId}, ${meetingId}, ${projectId}, ${meetingDate}, ${content}, ${speakers}, ${lineStart}, ${lineEnd})
-      `;
-      for (const chunk of group) {
-        await prisma.$executeRaw`UPDATE "Chunk" SET parent_id = ${parentId} WHERE id = ${chunk.id}`;
-      }
-    } catch (e) {
-      await prisma.processingLog.create({
-        data: { level: "error", meeting_id: meetingId, context: encryptJSON({ type: "parent_creation_failed", window_start: i, detail: String(e) }) },
-      });
-    }
-  }
-}
-
-type ChunkInput = {
-  meeting_id: string;
-  project_id: string | null;
-  chunk_type: string;
-  content: string;
-  search_text: string | null;
-  section_title: null;
-  speaker: null;
-  line_start: number | null;
-  line_end: number | null;
-  meeting_date: string | null;
-};
-
+/**
+ * 备用切割：转写稿不是腾讯会议格式（说话人(HH:MM:SS): 内容）时，
+ * 按字数 + 句末标点粗切，保证至少有 transcript 索引可用。
+ */
 function buildFallbackChunks(
   transcript: string,
   meetingId: string,
   projectId: string | null,
+  meetingDate: string | null,
 ): ChunkInput[] {
   const MAX_CHARS = 300;
-  const lines = transcript.split("\n");
+  // 必须与 addLineNumbers / buildTranscriptChunks 一样过滤空行，
+  // 否则这里算出的 line_start/line_end 会比前端显示的行号多算上空行，溯源跳转全部错位。
+  const lines = transcript.split("\n").filter((l) => l.trim() !== "");
   const chunks: ChunkInput[] = [];
   let buffer = "";
   let lineStart = 1;
@@ -71,7 +43,7 @@ function buildFallbackChunks(
         speaker: null,
         line_start: lineStart,
         line_end: lineEnd,
-        meeting_date: null,
+        meeting_date: meetingDate,
       });
     }
     buffer = "";
@@ -79,11 +51,8 @@ function buildFallbackChunks(
   };
 
   for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-    buffer += (buffer ? "\n" : "") + line;
-
-    const endsAtBreak = /[。！？\n]$/.test(line.trimEnd());
-    if (buffer.length >= MAX_CHARS && endsAtBreak) {
+    buffer += (buffer ? "\n" : "") + lines[i];
+    if (buffer.length >= MAX_CHARS && /[。！？.!?]$/.test(lines[i].trimEnd())) {
       flush(i + 1);
     }
   }
@@ -98,6 +67,14 @@ export async function POST(
 ) {
   const { userId } = await auth();
   if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+  const rl = checkRateLimit(userId, "POST:/api/meetings/rechunk");
+  if (!rl.allowed) {
+    return NextResponse.json(
+      { error: "请求过于频繁，请稍后再试" },
+      { status: 429, headers: { "Retry-After": String(Math.ceil((rl.resetAt - Date.now()) / 1000)) } },
+    );
+  }
 
   const apiKey = (await getDashScopeKey()) ?? process.env.DASHSCOPE_API_KEY ?? "";
   if (!apiKey) {
@@ -114,84 +91,37 @@ export async function POST(
     return NextResponse.json({ error: "Meeting not found" }, { status: 404 });
   }
 
-  await prisma.chunk.deleteMany({
-    where: { meeting_id: meetingId, chunk_type: "transcript" },
-  });
+  // 会议日期取自摘要；漏掉它这些 chunk 对所有按日期过滤的检索都是不可见的
+  let meetingDate: string | null = null;
+  try {
+    meetingDate = decryptJSON<Summary>(meeting.summary)?.meta?.date ?? null;
+  } catch { /* 摘要解不开就退化为无日期 */ }
+
+  let transcriptText: string;
+  try {
+    transcriptText = decrypt(meeting.transcript);
+  } catch {
+    return NextResponse.json({ error: "转写稿解密失败，无法重新切割" }, { status: 500 });
+  }
 
   const chunkInputs = buildFallbackChunks(
-    decrypt(meeting.transcript),
+    transcriptText,
     meetingId,
     meeting.project_id,
+    meetingDate,
   );
 
   if (chunkInputs.length === 0) {
     return NextResponse.json({ chunks_created: 0 });
   }
 
-  const created = await Promise.all(
-    chunkInputs.map((c) =>
-      prisma.chunk.create({
-        data: {
-          meeting_id: c.meeting_id,
-          project_id: c.project_id,
-          chunk_type: c.chunk_type,
-          content: c.content,
-          search_text: c.search_text,
-          section_title: c.section_title,
-          speaker: c.speaker,
-          line_start: c.line_start,
-          line_end: c.line_end,
-          meeting_date: c.meeting_date,
-        },
-      }),
-    ),
-  );
+  // 旧 transcript chunks 及其 parent 一并清掉，避免新旧混排后 parent_id 指向不存在的行
+  await prisma.chunkParent.deleteMany({ where: { meeting_id: meetingId } });
+  await prisma.chunk.deleteMany({ where: { meeting_id: meetingId, chunk_type: "transcript" } });
 
-  const BATCH = 10;
-  for (let i = 0; i < created.length; i += BATCH) {
-    const batch = created.slice(i, i + BATCH);
-    const inputs = chunkInputs.slice(i, i + BATCH);
-    const plainTexts = inputs.map((c) => c.content);
-    let vectors: number[][];
-    try {
-      vectors = (await fetchEmbeddings(plainTexts, apiKey)).embeddings;
-    } catch (e) {
-      await prisma.processingLog.create({
-        data: {
-          level: "error",
-          meeting_id: meetingId,
-          context: encryptJSON({
-            type: "rechunk_embedding_batch_failed",
-            batch_start: i,
-            detail: String(e),
-          }),
-        },
-      });
-      continue;
-    }
-    for (let j = 0; j < batch.length; j++) {
-      const vec = `[${vectors[j].join(",")}]`;
-      try {
-        await prisma.$executeRaw`
-          UPDATE "Chunk" SET embedding = ${vec}::vector WHERE id = ${batch[j].id}
-        `;
-      } catch (e) {
-        await prisma.processingLog.create({
-          data: {
-            level: "error",
-            meeting_id: meetingId,
-            context: encryptJSON({
-              type: "rechunk_embedding_write_failed",
-              chunk_id: batch[j].id,
-              detail: String(e),
-            }),
-          },
-        });
-      }
-    }
-  }
-
-  buildAndStoreParents(created.map((c, i) => ({ ...chunkInputs[i], id: c.id })), meetingId).catch(() => {});
+  const created = await insertChunks(chunkInputs);
+  await embedAndStore(created, meetingId, apiKey);
+  buildAndStoreParents(created).catch(() => {});
 
   return NextResponse.json({ chunks_created: created.length });
 }

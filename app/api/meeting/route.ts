@@ -8,10 +8,11 @@ import { callDashScope, callDashScopeStream } from "@/lib/dashscope";
 import { SUMMARY_SMART_PROMPT, SUMMARY_PROGRESS_PROMPT, MEMORY_DIFF_PROMPT } from "@/lib/prompts";
 import { validateDiff } from "@/lib/projectDocSchema";
 import {
-  type SectionContent, type Section, type Summary, type ChunkInput,
+  type Section, type Summary,
   buildSummaryChunks, buildTranscriptChunks, embedAndStore, buildAndStoreParents,
 } from "@/lib/chunking";
 import { checkRateLimit } from "@/lib/ratelimit";
+import { getLangRule } from "@/lib/lang";
 
 // ── Streaming JSON helpers ────────────────────────────────────────────────────
 // Extract a complete {...} object starting at `start`. Returns null if incomplete.
@@ -68,9 +69,6 @@ function extractMeta(text: string): Summary["meta"] | null {
   try { return JSON.parse(objStr) as Summary["meta"]; } catch { return null; }
 }
 
-// ── Types (re-exported from lib for local use) ────────────────────────────────
-// SectionContent, Section, Summary, ChunkInput are imported from @/lib/chunking
-
 // ── GET: list standalone meetings ─────────────────────────────────────────────
 export async function GET() {
   const { userId } = await auth();
@@ -97,7 +95,7 @@ export async function POST(req: NextRequest) {
   const { userId } = await auth();
   if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-  const rl = checkRateLimit(userId, "POST", "POST:/api/meeting");
+  const rl = checkRateLimit(userId, "POST:/api/meeting");
   if (!rl.allowed) {
     return NextResponse.json(
       { error: "请求过于频繁，请稍后再试（每分钟最多 5 次）" },
@@ -108,10 +106,7 @@ export async function POST(req: NextRequest) {
   const apiKey = (await getDashScopeKey()) ?? process.env.DASHSCOPE_API_KEY ?? "";
   if (!apiKey) return NextResponse.json({ error: "API key required. Please configure your DashScope API key in Settings." }, { status: 401 });
 
-  const lang = req.cookies.get("lang_pref")?.value ?? "zh";
-  const langRule = lang === "en"
-    ? "Output language: English. Retain original form for technical terms and proper nouns."
-    : "输出语言：以中文为主，学术名词、专有名词、代码标识符保留英文原文。";
+  const langRule = getLangRule(req);
 
   const { transcript, template = "smart", date, time, project_id } = await req.json();
   if (!transcript?.trim()) return NextResponse.json({ error: "transcript is required" }, { status: 400 });
@@ -126,8 +121,13 @@ export async function POST(req: NextRequest) {
 
   const numbered = addLineNumbers(transcript);
   const systemPrompt = template === "project" ? SUMMARY_PROGRESS_PROMPT : SUMMARY_SMART_PROMPT;
+  // no_document 项目没有主文档，塞空对象只会给模型噪音
+  const hasProjectDoc =
+    !!project && !project.no_document &&
+    Object.keys(project.document as Record<string, unknown>).length > 0;
   const contextLines = [
-    project ? `<project_context>\n${JSON.stringify(project.document)}\n</project_context>` : null,
+    langRule,
+    hasProjectDoc ? `<project_context>\n${JSON.stringify(project!.document)}\n</project_context>` : null,
     date ? `会议日期：${date}` : null,
     time ? `会议时间：${time}` : null,
     `以下是会议记录：\n\n${numbered}`,
@@ -178,8 +178,24 @@ export async function POST(req: NextRequest) {
 
         const typedSummary = summary as Summary;
 
-        // User-provided date takes priority over LLM-extracted date
-        if (date) typedSummary.meta.date = date;
+        // 模型偶发漏字段（缺 meta / sections 不是数组），下面所有代码都假设它们存在，
+        // 这里显式兜底，避免直接抛 TypeError 把整条 SSE 打断成一句 [object Object]
+        if (!typedSummary.meta || typeof typedSummary.meta !== "object") {
+          typedSummary.meta = { date: null, time: null, participants: [] };
+        }
+        if (!Array.isArray(typedSummary.meta.participants)) typedSummary.meta.participants = [];
+        if (!Array.isArray(typedSummary.sections)) {
+          controller.enqueue(send("error", { error: "模型返回的摘要缺少 sections，请重试", raw: summaryContent.slice(0, 2000) }));
+          controller.close();
+          return;
+        }
+
+        // 会议日期唯一真源：用户输入 > 模型抽取 > 今天。
+        // 必须写回 meta.date —— buildSummaryChunks / buildTranscriptChunks 都从这里取
+        // chunk.meeting_date，留 null 会让这些 chunk 对所有日期过滤检索不可见。
+        const today = new Date().toISOString().slice(0, 10);
+        const meetingDate = date || typedSummary.meta.date || today;
+        typedSummary.meta.date = meetingDate;
 
         // Emit remaining sections (last section + any missed)
         for (let i = emittedSectionCount; i < typedSummary.sections.length; i++) {
@@ -191,8 +207,6 @@ export async function POST(req: NextRequest) {
         }
 
         // Persist meeting (initial status: processing)
-        const today = new Date().toISOString().slice(0, 10);
-        const meetingDate = date || typedSummary.meta.date || today;
         const meeting = await prisma.meeting.create({
           data: {
             user_id: userId,
@@ -207,7 +221,7 @@ export async function POST(req: NextRequest) {
         // sources immediately after `done`)
         const summaryChunkInputs = buildSummaryChunks(typedSummary, meeting.id, project_id);
         const { chunks: transcriptChunkInputs, matchedLines, totalLines } =
-          buildTranscriptChunks(transcript, meeting.id, project_id, typedSummary.meta.date ?? undefined);
+          buildTranscriptChunks(transcript, meeting.id, project_id, meetingDate);
 
         const formatOk = totalLines === 0 || matchedLines / totalLines >= 0.3;
         let chunks_warning: { matched_lines: number; total_lines: number } | undefined;
@@ -311,7 +325,22 @@ export async function POST(req: NextRequest) {
                 },
               }).catch(() => {});
             }
-          })();
+          })().catch(async (err) => {
+            // 兜底：IIFE 内同步抛出的异常（如 encryptJSON 失败）不会被上面的
+            // 逐条 .catch() 接住，未捕获的 rejection 在 Node 默认配置下会杀进程。
+            await prisma.meeting
+              .update({ where: { id: meeting.id }, data: { processing_status: "failed" } })
+              .catch(() => {});
+            await prisma.processingLog
+              .create({
+                data: {
+                  level: "error",
+                  meeting_id: meeting.id,
+                  context: encryptJSON({ type: "diff_task_crashed", error: String(err) }),
+                },
+              })
+              .catch(() => {});
+          });
         } else {
           // Standalone meeting: nothing more to do, mark done.
           prisma.meeting.update({

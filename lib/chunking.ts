@@ -135,6 +135,65 @@ export function buildTranscriptChunks(
 
 export { fetchEmbeddings };
 
+/**
+ * 批量落库并回填 id。
+ * id 在客户端生成而不是依赖 DB 默认值，这样一次 createMany 就能确定每条 chunk 的 id，
+ * 既不用 N 次 create（一次会议几百条 = 几百个来回），也不用假设 RETURNING 的行序。
+ */
+export async function insertChunks(
+  inputs: ChunkInput[],
+): Promise<Array<ChunkInput & { id: string }>> {
+  if (inputs.length === 0) return [];
+  const withIds = inputs.map((c) => ({ ...c, id: crypto.randomUUID() }));
+  await prisma.chunk.createMany({
+    data: withIds.map((c) => ({
+      id: c.id,
+      meeting_id: c.meeting_id,
+      project_id: c.project_id,
+      chunk_type: c.chunk_type,
+      content: c.content,
+      search_text: c.search_text,
+      section_title: c.section_title,
+      speaker: c.speaker,
+      line_start: c.line_start,
+      line_end: c.line_end,
+      meeting_date: c.meeting_date,
+    })),
+  });
+  return withIds;
+}
+
+/**
+ * 摘要被编辑后重建 summary chunks（transcript chunks 不受影响，保持原样）。
+ * 不重建的话，检索命中的仍是编辑前的旧文本——用户改正了摘要，问答却还在引用错误内容。
+ */
+export async function reindexSummaryChunks(
+  meetingId: string,
+  projectId: string | null,
+  summary: Summary,
+  apiKey: string,
+): Promise<void> {
+  // 会议日期可能被一起改了。transcript chunks 的正文没变不用重新 embed，
+  // 但 meeting_date 必须同步，否则按日期过滤的检索会漏掉这次会议的逐字稿。
+  const meetingDate = summary.meta?.date ?? null;
+  await prisma.chunk.updateMany({
+    where: { meeting_id: meetingId, chunk_type: "transcript" },
+    data: { meeting_date: meetingDate },
+  });
+  await prisma.chunkParent.updateMany({
+    where: { meeting_id: meetingId },
+    data: { meeting_date: meetingDate },
+  });
+
+  await prisma.chunk.deleteMany({
+    where: { meeting_id: meetingId, chunk_type: "summary" },
+  });
+  const inputs = buildSummaryChunks(summary, meetingId, projectId ?? undefined);
+  if (inputs.length === 0) return;
+  const created = await insertChunks(inputs);
+  await embedAndStore(created, meetingId, apiKey);
+}
+
 export async function embedAndStore(
   chunks: Array<ChunkInput & { id: string }>,
   meetingId: string,

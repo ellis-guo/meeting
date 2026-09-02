@@ -20,26 +20,33 @@ const ApiKeyContext = createContext<ApiKeyContextValue | null>(null);
 export function ApiKeyProvider({ children }: { children: ReactNode }) {
   const { isLoaded, userId } = useAuth();
   const [status, setStatus] = useState<KeyStatus>({ configured: false, expiresAt: null });
-  const [loading, setLoading] = useState(true);
+  const [fetched, setFetched] = useState(false);
   const [modalOpen, setModalOpen] = useState(false);
 
+  // loading 由状态推导，不在 effect 里同步 setState（React 19 会因级联渲染报错）
+  const loading = !isLoaded || (!!userId && !fetched);
+
   useEffect(() => {
-    if (!isLoaded) return;
-    if (!userId) {
-      setLoading(false);
-      return;
-    }
+    if (!isLoaded || !userId) return;
+    let cancelled = false;
 
     fetch("/api/auth/api-key")
       .then((r) => r.json())
       .then((data) => {
+        if (cancelled) return;
         setStatus({
           configured: data.configured ?? false,
           expiresAt: data.expiresAt ? new Date(data.expiresAt) : null,
         });
       })
-      .catch(() => setStatus({ configured: false, expiresAt: null }))
-      .finally(() => setLoading(false));
+      .catch(() => {
+        if (!cancelled) setStatus({ configured: false, expiresAt: null });
+      })
+      .finally(() => {
+        if (!cancelled) setFetched(true);
+      });
+
+    return () => { cancelled = true; };
   }, [isLoaded, userId]);
 
   const setApiKey = async (key: string) => {

@@ -23,7 +23,7 @@ export async function POST(
     );
   }
 
-  const rl = checkRateLimit(userId, "POST", "POST:/api/meetings/ask");
+  const rl = checkRateLimit(userId, "POST:/api/meetings/ask");
   if (!rl.allowed) {
     const encoder = new TextEncoder();
     return new Response(

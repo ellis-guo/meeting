@@ -91,7 +91,11 @@ type ArrayDiffState = {
   deletionChecked: boolean[]; additionChecked: boolean[];
 };
 
-function computeArrayDiff(oldArr: unknown[], newArr: unknown[]): ArrayDiffState {
+// 勾选语义：checked = 该条目出现在新文档里。
+// deleted 组默认不勾（= 接受 AI 的删除建议），added 组默认勾上（= 接受新增建议）。
+// lockDeletions 用于 key_decisions —— 后端强制“只增不删”，UI 里就不该让用户勾出一个
+// 必然被 400 拒绝的状态。
+function computeArrayDiff(oldArr: unknown[], newArr: unknown[], lockDeletions = false): ArrayDiffState {
   const oldStrs = oldArr.map(i => JSON.stringify(i));
   const unchanged: unknown[] = [], added: unknown[] = [];
   const used = new Set<number>();
@@ -101,8 +105,17 @@ function computeArrayDiff(oldArr: unknown[], newArr: unknown[]): ArrayDiffState 
     if (idx >= 0) { unchanged.push(item); used.add(idx); } else { added.push(item); }
   }
   const deleted = oldArr.filter((_, i) => !used.has(i));
-  return { unchanged, deleted, added, deletionChecked: deleted.map(() => false), additionChecked: added.map(() => true) };
+  return {
+    unchanged,
+    deleted,
+    added,
+    deletionChecked: deleted.map(() => lockDeletions),
+    additionChecked: added.map(() => true),
+  };
 }
+
+// 只增不删的字段，与后端 diff/apply + PATCH /document 的校验保持一致
+const APPEND_ONLY_FIELDS = new Set(["key_decisions"]);
 
 type UpdateState = boolean | ArrayDiffState;
 function isArrayDiff(s: UpdateState): s is ArrayDiffState {
@@ -151,7 +164,13 @@ export default function DiffPanel({ diff, projectId, meetingId, projectDocument,
 
   const [states, setStates] = useState<Record<number, UpdateState>>(() =>
     Object.fromEntries(stdUpdates.map((u, i) => {
-      if (Array.isArray(u.new)) return [i, computeArrayDiff(Array.isArray(u.old) ? (u.old as unknown[]) : [], u.new as unknown[])];
+      if (Array.isArray(u.new)) {
+        return [i, computeArrayDiff(
+          Array.isArray(u.old) ? (u.old as unknown[]) : [],
+          u.new as unknown[],
+          APPEND_ONLY_FIELDS.has(u.field),
+        )];
+      }
       return [i, true];
     }))
   );
@@ -182,8 +201,13 @@ export default function DiffPanel({ diff, projectId, meetingId, projectDocument,
       .map(normalizeOpenIssue).filter(i => !!i.resolved_at);
     newDoc.open_issues = [
       ...archivedResolved,
-      ...openIssuesState.filter(i => !i.isNew).map(({ isNew: _, willResolve, accepted: __, ...rest }) =>
-        willResolve ? { ...rest, resolved_at: meetingDate } : rest),
+      // 落库时剥掉三个纯 UI 字段（isNew / willResolve / accepted）
+      ...openIssuesState.filter(i => !i.isNew).map((i) => ({
+        issue: i.issue,
+        owner: i.owner,
+        opened_at: i.opened_at,
+        resolved_at: i.willResolve ? meetingDate : i.resolved_at,
+      })),
       ...openIssuesState.filter(i => i.isNew && i.accepted).map(i => ({ issue: i.issue, owner: i.owner, opened_at: meetingDate, resolved_at: null })),
     ];
 
@@ -235,11 +259,18 @@ export default function DiffPanel({ diff, projectId, meetingId, projectDocument,
         {stdUpdates.map((update, i) => {
           const s = states[i];
           const isArr = isArrayDiff(s);
+          const appendOnly = APPEND_ONLY_FIELDS.has(update.field);
           const nothingSelected = isArr ? s.deletionChecked.every(Boolean) && s.additionChecked.every(v => !v) : !(s as boolean);
           return (
             <div key={i} className={`rounded-lg border p-3 space-y-2 transition-colors ${nothingSelected ? "border-lark-border opacity-60" : "border-lark-blue/30 bg-lark-blue-light/50"}`}>
               {isArr ? (
-                <span className="text-xs font-semibold text-lark-1">{FIELD_LABELS[update.field] ?? update.field}</span>
+                <div className="flex items-baseline gap-2 flex-wrap">
+                  <span className="text-xs font-semibold text-lark-1">{FIELD_LABELS[update.field] ?? update.field}</span>
+                  <span className="text-[10px] text-lark-3">勾选 = 写入新文档；划线条目将被移除</span>
+                  {appendOnly && (
+                    <span className="text-[10px] text-lark-3">· 该字段只增不删，已有条目已锁定</span>
+                  )}
+                </div>
               ) : (
                 <label className="flex items-center gap-2 cursor-pointer">
                   <input type="checkbox" checked={s as boolean} onChange={e => setStates(p => ({ ...p, [i]: e.target.checked }))} className="rounded border-lark-border accent-lark-blue" />
@@ -254,7 +285,14 @@ export default function DiffPanel({ diff, projectId, meetingId, projectDocument,
                       const checked = (s as ArrayDiffState).deletionChecked[j];
                       return (
                         <li key={`d-${j}`} className="flex items-start gap-2">
-                          <input type="checkbox" checked={checked} onChange={e => setStates(p => { const c = p[i] as ArrayDiffState; const a = [...c.deletionChecked]; a[j] = e.target.checked; return { ...p, [i]: { ...c, deletionChecked: a } }; })} className="mt-0.5 rounded border-lark-border accent-lark-blue shrink-0" />
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            disabled={appendOnly}
+                            title={appendOnly ? "关键决策只能新增，不能删除" : undefined}
+                            onChange={e => setStates(p => { const c = p[i] as ArrayDiffState; const a = [...c.deletionChecked]; a[j] = e.target.checked; return { ...p, [i]: { ...c, deletionChecked: a } }; })}
+                            className="mt-0.5 rounded border-lark-border accent-lark-blue shrink-0 disabled:opacity-60 disabled:cursor-not-allowed"
+                          />
                           <span className={`leading-relaxed ${checked ? "text-lark-1" : "line-through text-lark-danger opacity-70"}`}>{renderItem(item)}</span>
                           {!checked && <span className="text-lark-danger shrink-0">−</span>}
                         </li>

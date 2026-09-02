@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@clerk/nextjs/server";
 import { prisma } from "@/lib/prisma";
 import { decryptJSON } from "@/lib/crypto";
+import { deleteProjectCascade } from "@/lib/cascade";
 
 export async function GET(
   _req: NextRequest,
@@ -77,12 +78,7 @@ export async function DELETE(
     return NextResponse.json({ error: "Project not found" }, { status: 404 });
   }
 
-  const meetings = await prisma.meeting.findMany({ where: { project_id: id }, select: { id: true } });
-  const meetingIds = meetings.map((m) => m.id);
-
-  await prisma.chunk.deleteMany({ where: { meeting_id: { in: meetingIds } } });
-  await prisma.meeting.deleteMany({ where: { project_id: id } });
-  await prisma.project.delete({ where: { id } });
+  await deleteProjectCascade(id, userId);
 
   return NextResponse.json({ ok: true });
 }

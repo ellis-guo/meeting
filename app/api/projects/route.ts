@@ -6,6 +6,8 @@ import { getDashScopeKey } from "@/lib/apiKey.server";
 import { callDashScope } from "@/lib/dashscope";
 import { extractJSON } from "@/lib/utils";
 import { MEMORY_INIT_PROMPT } from "@/lib/prompts";
+import { getLangRule } from "@/lib/lang";
+import { checkRateLimit } from "@/lib/ratelimit";
 
 async function generateDocumentFromFiles(
   referenceFiles: string[],
@@ -17,23 +19,27 @@ async function generateDocumentFromFiles(
   return extractJSON(content);
 }
 
-function getLangRule(req: NextRequest): string {
-  const lang = req.cookies.get("lang_pref")?.value ?? "zh";
-  return lang === "en"
-    ? "Output language: English. Retain original form for technical terms and proper nouns."
-    : "输出语言：以中文为主，学术名词、专有名词、代码标识符保留英文原文。";
-}
-
 export async function POST(req: NextRequest) {
   const { userId } = await auth();
   if (!userId)
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+  const rl = checkRateLimit(userId, "POST:/api/projects");
+  if (!rl.allowed) {
+    return NextResponse.json(
+      { error: "请求过于频繁，请稍后再试" },
+      { status: 429, headers: { "Retry-After": String(Math.ceil((rl.resetAt - Date.now()) / 1000)) } },
+    );
+  }
 
   const langRule = getLangRule(req);
   const { name, reference_files = [], no_document = false } = await req.json();
 
   if (!name?.trim()) {
     return NextResponse.json({ error: "name is required" }, { status: 400 });
+  }
+  if (name.trim().length > 100) {
+    return NextResponse.json({ error: "name too long (max 100)" }, { status: 400 });
   }
 
   if (!Array.isArray(reference_files) || reference_files.length > 10) {
@@ -42,6 +48,38 @@ export async function POST(req: NextRequest) {
   for (const f of reference_files) {
     if (typeof f !== "string" || f.length > 100_000) {
       return NextResponse.json({ error: "each reference file must be a string under 100KB" }, { status: 400 });
+    }
+  }
+
+  const needsDraft = !no_document && reference_files.length > 0;
+
+  // 先生成再落库：LLM 失败时前端拿到错误不会跳转，若此时项目已建好，
+  // 用户回到首页就会看到一个空壳项目且无从察觉。
+  let document_draft: unknown = null;
+  if (needsDraft) {
+    const apiKey =
+      (await getDashScopeKey()) ?? process.env.DASHSCOPE_API_KEY ?? "";
+    if (!apiKey) {
+      return NextResponse.json(
+        {
+          error:
+            "API key required. Please configure your DashScope API key in Settings.",
+        },
+        { status: 401 },
+      );
+    }
+
+    try {
+      document_draft = await generateDocumentFromFiles(
+        reference_files,
+        apiKey,
+        langRule,
+      );
+    } catch {
+      return NextResponse.json(
+        { error: "Failed to generate document from reference files" },
+        { status: 502 },
+      );
     }
   }
 
@@ -54,36 +92,6 @@ export async function POST(req: NextRequest) {
       no_document: !!no_document,
     },
   });
-
-  if (no_document || reference_files.length === 0) {
-    return NextResponse.json({ project_id: project.id, document_draft: null });
-  }
-
-  const apiKey =
-    (await getDashScopeKey()) ?? process.env.DASHSCOPE_API_KEY ?? "";
-  if (!apiKey) {
-    return NextResponse.json(
-      {
-        error:
-          "API key required. Please configure your DashScope API key in Settings.",
-      },
-      { status: 401 },
-    );
-  }
-
-  let document_draft: unknown;
-  try {
-    document_draft = await generateDocumentFromFiles(
-      reference_files,
-      apiKey,
-      langRule,
-    );
-  } catch {
-    return NextResponse.json(
-      { error: "Failed to generate document from reference files" },
-      { status: 502 },
-    );
-  }
 
   return NextResponse.json({ project_id: project.id, document_draft });
 }

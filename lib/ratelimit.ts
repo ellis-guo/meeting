@@ -7,17 +7,22 @@ const store = new Map<string, WindowEntry>();
 
 const WINDOW_MS = 60_000; // 1 minute
 
-// Limits per (userId, route) per minute
+// Limits per (userId, route) per minute.
+// 只要路由会调 LLM 就必须在这里登记，否则走 DEFAULT_LIMIT（对花钱的接口太宽松）。
 const LIMITS: Record<string, number> = {
   "POST:/api/meeting": 5,
   "POST:/api/meetings/ask": 20,
   "POST:/api/projects/ask": 20,
+  "POST:/api/projects": 10,
+  "POST:/api/projects/diff": 10,
+  "POST:/api/projects/reprocess": 5,
+  "POST:/api/projects/reembed": 2,
+  "POST:/api/meetings/rechunk": 5,
 };
 const DEFAULT_LIMIT = 30;
 
 export function checkRateLimit(
   userId: string,
-  method: string,
   routeKey: string, // e.g. "POST:/api/meeting"
 ): { allowed: boolean; remaining: number; resetAt: number } {
   const limit = LIMITS[routeKey] ?? DEFAULT_LIMIT;

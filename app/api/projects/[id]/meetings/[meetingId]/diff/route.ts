@@ -1,19 +1,30 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@clerk/nextjs/server";
 import { prisma } from "@/lib/prisma";
-import { decryptJSON } from "@/lib/crypto";
+import { decryptJSON, encryptJSON } from "@/lib/crypto";
 import { getDashScopeKey } from "@/lib/apiKey.server";
 import { callDashScope } from "@/lib/dashscope";
 import { extractJSON } from "@/lib/utils";
 import { MEMORY_DIFF_PROMPT } from "@/lib/prompts";
+import { validateDiff } from "@/lib/projectDocSchema";
+import { getLangRule } from "@/lib/lang";
+import { checkRateLimit } from "@/lib/ratelimit";
 
 export async function POST(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: Promise<{ id: string; meetingId: string }> },
 ) {
   const { userId } = await auth();
   if (!userId)
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+  const rl = checkRateLimit(userId, "POST:/api/projects/diff");
+  if (!rl.allowed) {
+    return NextResponse.json(
+      { error: "请求过于频繁，请稍后再试" },
+      { status: 429, headers: { "Retry-After": String(Math.ceil((rl.resetAt - Date.now()) / 1000)) } },
+    );
+  }
 
   const apiKey =
     (await getDashScopeKey()) ?? process.env.DASHSCOPE_API_KEY ?? "";
@@ -49,11 +60,7 @@ export async function POST(
     (summary as { meta?: { date?: string | null } })?.meta?.date ??
     new Date().toISOString().slice(0, 10);
 
-  const lang = _req.cookies.get("lang_pref")?.value ?? "zh";
-  const langRule =
-    lang === "en"
-      ? "Output language: English. Retain original form for technical terms and proper nouns."
-      : "输出语言：以中文为主，学术名词、专有名词、代码标识符保留英文原文。";
+  const langRule = getLangRule(req);
 
   let diffContent: string;
   try {
@@ -66,11 +73,37 @@ export async function POST(
     return NextResponse.json({ error: String(e) }, { status: 502 });
   }
 
+  // 解析/校验失败必须显式报错。以前这里静默降级成 { updates: [] }，
+  // 前端会显示“本次会议无需更新主文档”，用户根本不知道是模型输出坏了。
   let document_diff: unknown;
   try {
     document_diff = extractJSON(diffContent);
   } catch {
-    document_diff = { updates: [] };
+    return NextResponse.json(
+      { error: "模型返回的更新建议不是合法 JSON，请重试" },
+      { status: 502 },
+    );
+  }
+  const schemaError = validateDiff(document_diff);
+  if (schemaError) {
+    return NextResponse.json(
+      { error: `模型返回的更新建议结构有误：${schemaError}` },
+      { status: 502 },
+    );
+  }
+
+  // 落库。手动触发的 diff 以前只走 HTTP 响应回前端内存，刷新即丢——
+  // 正是 Phase 9 要消灭的问题。有实际更新时才置 pending，避免空 diff 卡住项目问答。
+  const updates = (document_diff as { updates: unknown[] }).updates;
+  if (updates.length > 0) {
+    await prisma.meeting.update({
+      where: { id: meetingId },
+      data: {
+        document_diff: encryptJSON(document_diff),
+        diff_status: "pending",
+        processing_status: "done",
+      },
+    });
   }
 
   return NextResponse.json({

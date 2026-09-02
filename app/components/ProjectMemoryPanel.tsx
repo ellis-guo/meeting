@@ -59,7 +59,7 @@ function renderItem(item: unknown): { icon: string | null; text: string; striket
   return { icon: null, text: JSON.stringify(item) };
 }
 
-function FieldValue({ fieldKey, value }: { fieldKey: string; value: unknown }) {
+function FieldValue({ value }: { value: unknown }) {
   if (value === null || value === undefined)
     return <span className="text-lark-4 italic text-sm">（空）</span>;
 
@@ -208,7 +208,7 @@ export default function ProjectMemoryPanel({ projectId, memory, onUpdated, initi
                         <span className="text-xs text-lark-4">空</span>
                       )}
                     </div>
-                    {!isEmpty(value) && <FieldValue fieldKey={key} value={value} />}
+                    {!isEmpty(value) && <FieldValue value={value} />}
                   </div>
                 );
               })}

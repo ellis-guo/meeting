@@ -420,6 +420,11 @@ export default function ProjectDetailPage() {
   const [editingName, setEditingName] = useState(false);
   const [nameDraft, setNameDraft] = useState("");
   const [savingName, setSavingName] = useState(false);
+  const nameInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (editingName) nameInputRef.current?.select();
+  }, [editingName]);
 
   const handleStartRename = () => {
     if (!project) return;
@@ -485,10 +490,16 @@ export default function ProjectDetailPage() {
   useEffect(() => {
     fetch(`/api/projects/${id}`)
       .then((r) => {
-        if (r.status === 404) { setNotFound(true); return null; }
+        // 只判 404 的话，5xx 会把 { error } 当成 project 塞进 state，
+        // 随后 project.document 为 undefined，ProjectMemoryPanel 直接白屏。
+        if (!r.ok) { setNotFound(true); return null; }
         return r.json();
       })
-      .then((data) => { if (data) setProject(data); })
+      .then((data) => {
+        if (data && typeof data === "object" && data.id) setProject(data);
+        else if (data) setNotFound(true);
+      })
+      .catch(() => setNotFound(true))
       .finally(() => setLoading(false));
   }, [id]);
 
@@ -534,7 +545,9 @@ export default function ProjectDetailPage() {
               disabled={savingName}
               maxLength={100}
               className="text-sm font-semibold text-lark-1 bg-lark-sunken border border-lark-blue/40 rounded-md px-2 py-0.5 focus:outline-none focus:ring-2 focus:ring-lark-blue/40 min-w-[120px]"
-              ref={(el) => { if (el) el.select(); }}
+              // 内联 ref 每次渲染身份都变，React 会重新挂载 ref；如果在这里调 select()，
+              // 每敲一个字都会全选一次，下一个字直接把前面覆盖掉。改成挂载时选一次。
+              ref={nameInputRef}
             />
           ) : (
             <span

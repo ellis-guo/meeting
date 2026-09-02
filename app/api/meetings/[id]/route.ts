@@ -2,6 +2,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@clerk/nextjs/server";
 import { prisma } from "@/lib/prisma";
 import { decrypt, encryptJSON, decryptJSON } from "@/lib/crypto";
+import { getDashScopeKey } from "@/lib/apiKey.server";
+import { reindexSummaryChunks, type Summary } from "@/lib/chunking";
+import { deleteMeetingCascade } from "@/lib/cascade";
 
 export async function GET(
   _req: NextRequest,
@@ -51,6 +54,21 @@ export async function PATCH(
   if (!summary || typeof summary !== "object") {
     return NextResponse.json({ error: "summary is required" }, { status: 400 });
   }
+  const typed = summary as Summary;
+  if (!typed.meta || !Array.isArray(typed.sections)) {
+    return NextResponse.json(
+      { error: "summary 必须包含 meta 与 sections" },
+      { status: 400 },
+    );
+  }
+  if (typed.meta.date !== null && typed.meta.date !== undefined) {
+    if (typeof typed.meta.date !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(typed.meta.date)) {
+      return NextResponse.json(
+        { error: `会议日期必须是 YYYY-MM-DD，收到：${typed.meta.date}` },
+        { status: 400 },
+      );
+    }
+  }
 
   const meeting = await prisma.meeting.findFirst({ where: { id, user_id: userId } });
   if (!meeting) {
@@ -59,10 +77,26 @@ export async function PATCH(
 
   await prisma.meeting.update({
     where: { id },
-    data: { summary: encryptJSON(summary) },
+    data: { summary: encryptJSON(typed) },
   });
 
-  return NextResponse.json({ id, summary });
+  // 摘要变了，检索索引也得跟着变。放后台跑（要调 embedding），失败记 ProcessingLog。
+  const apiKey = (await getDashScopeKey()) ?? "";
+  if (apiKey) {
+    reindexSummaryChunks(id, meeting.project_id, typed, apiKey).catch(async (e) => {
+      await prisma.processingLog
+        .create({
+          data: {
+            level: "error",
+            meeting_id: id,
+            context: encryptJSON({ type: "summary_reindex_failed", detail: String(e) }),
+          },
+        })
+        .catch(() => {});
+    });
+  }
+
+  return NextResponse.json({ id, summary: typed });
 }
 
 export async function DELETE(
@@ -79,8 +113,7 @@ export async function DELETE(
     return NextResponse.json({ error: "Meeting not found" }, { status: 404 });
   }
 
-  await prisma.chunk.deleteMany({ where: { meeting_id: id } });
-  await prisma.meeting.delete({ where: { id } });
+  await deleteMeetingCascade(id, userId);
 
   return NextResponse.json({ ok: true });
 }

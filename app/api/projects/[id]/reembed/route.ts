@@ -7,9 +7,11 @@ import {
   type Summary,
   buildSummaryChunks,
   buildTranscriptChunks,
+  insertChunks,
   embedAndStore,
   buildAndStoreParents,
 } from "@/lib/chunking";
+import { checkRateLimit } from "@/lib/ratelimit";
 
 export async function POST(
   _req: NextRequest,
@@ -17,6 +19,14 @@ export async function POST(
 ) {
   const { userId } = await auth();
   if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+  const rl = checkRateLimit(userId, "POST:/api/projects/reembed");
+  if (!rl.allowed) {
+    return NextResponse.json(
+      { error: "重新向量化开销很大，请稍后再试" },
+      { status: 429, headers: { "Retry-After": String(Math.ceil((rl.resetAt - Date.now()) / 1000)) } },
+    );
+  }
 
   const apiKey = (await getDashScopeKey()) ?? process.env.DASHSCOPE_API_KEY ?? "";
   if (!apiKey) {
@@ -44,7 +54,7 @@ export async function POST(
 
   for (const meeting of meetings) {
     // 1. 清旧数据
-    await prisma.$executeRaw`DELETE FROM "ChunkParent" WHERE meeting_id = ${meeting.id}`;
+    await prisma.chunkParent.deleteMany({ where: { meeting_id: meeting.id } });
     await prisma.chunk.deleteMany({ where: { meeting_id: meeting.id } });
 
     // 2. 解密摘要
@@ -75,27 +85,8 @@ export async function POST(
     const chunksToInsert = formatOk ? [...summaryChunks, ...transcriptChunks] : summaryChunks;
 
     // 5. 写入 DB
-    const created = await Promise.all(
-      chunksToInsert.map((c) =>
-        prisma.chunk.create({
-          data: {
-            meeting_id: c.meeting_id,
-            project_id: c.project_id,
-            chunk_type: c.chunk_type,
-            content: c.content,
-            search_text: c.search_text,
-            section_title: c.section_title,
-            speaker: c.speaker,
-            line_start: c.line_start,
-            line_end: c.line_end,
-            meeting_date: c.meeting_date,
-          },
-        }),
-      ),
-    );
-
-    const chunksWithIds = created.map((c, i) => ({ ...chunksToInsert[i], id: c.id }));
-    totalChunks += created.length;
+    const chunksWithIds = await insertChunks(chunksToInsert);
+    totalChunks += chunksWithIds.length;
 
     // 6. Embed
     await embedAndStore(chunksWithIds, meeting.id, apiKey);

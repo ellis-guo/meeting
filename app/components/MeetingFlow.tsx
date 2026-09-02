@@ -1,14 +1,13 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
-import { ArrowLeft, ChevronRight, Pencil, Printer, RotateCcw, X } from "lucide-react";
+import { toast } from "sonner";
+import { Pencil, Printer, RotateCcw, X } from "lucide-react";
 import SummaryPanel from "./SummaryPanel";
 import TranscriptPanel from "./TranscriptPanel";
-import DiffPanel from "./DiffPanel";
 import MeetingAskPanel from "./MeetingAskPanel";
 import NotificationBell from "./NotificationBell";
-import { Summary, Section, DocumentDiff, ProjectMemory } from "../types";
+import { Summary, Section } from "../types";
 import { addLineNumbers } from "@/lib/utils";
 import { useApiKey } from "@/lib/ApiKeyContext";
 
@@ -17,15 +16,14 @@ type PopupState = { sourceLines: number[]; x: number; y: number } | null;
 type ChunksWarning = { matched_lines: number; total_lines: number };
 type Meta = Summary["meta"];
 
+// 注：主文档 diff 不在本组件处理。Phase 9 起 diff 由后台异步生成落库，
+// 在项目内会议详情页读 Meeting.document_diff 渲染，这里只负责“输入 → 摘要”。
 interface Props {
   projectId?: string;
-  projectDocument?: ProjectMemory;
-  onDiffConfirmed?: () => void;
 }
 
-export default function MeetingFlow({ projectId, projectDocument, onDiffConfirmed }: Props) {
-  const router = useRouter();
-  const { status: keyStatus, promptApiKey } = useApiKey();
+export default function MeetingFlow({ projectId }: Props) {
+  const { status: keyStatus, loading: keyLoading, promptApiKey } = useApiKey();
 
   const [transcriptInput, setTranscriptInput] = useState("");
   const [dateInput, setDateInput] = useState("");
@@ -38,11 +36,11 @@ export default function MeetingFlow({ projectId, projectDocument, onDiffConfirme
 
   const [numberedTranscript, setNumberedTranscript] = useState<string | null>(null);
   const [summary, setSummary] = useState<Summary | null>(null);
-  const [documentDiff, setDocumentDiff] = useState<DocumentDiff | null>(null);
   const [meetingId, setMeetingId] = useState<string | null>(null);
   const [chunksWarning, setChunksWarning] = useState<ChunksWarning | null>(null);
 
   const [isEditing, setIsEditing] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [popup, setPopup] = useState<PopupState>(null);
   const [highlightedLines, setHighlightedLines] = useState<number[]>([]);
   const [rechunking, setRechunking] = useState(false);
@@ -60,6 +58,7 @@ export default function MeetingFlow({ projectId, projectDocument, onDiffConfirme
 
   const handleGenerate = async () => {
     if (!transcriptInput.trim()) return;
+    if (keyLoading) return; // Key 状态还没查回来就弹窗，会误报“未配置”
     if (!keyStatus.configured) { promptApiKey(); return; }
 
     const numbered = addLineNumbers(transcriptInput);
@@ -67,7 +66,6 @@ export default function MeetingFlow({ projectId, projectDocument, onDiffConfirme
     setStreamingSections([]);
     setStreamingMeta(null);
     setSummary(null);
-    setDocumentDiff(null);
     setMeetingId(null);
     setChunksWarning(null);
     setGenerateError(null);
@@ -143,22 +141,71 @@ export default function MeetingFlow({ projectId, projectDocument, onDiffConfirme
   const handleRechunk = async () => {
     if (!meetingId) return;
     setRechunking(true);
-    try { await fetch(`/api/meetings/${meetingId}/rechunk`, { method: "POST" }); }
-    finally { setRechunking(false); setChunksWarning(null); }
+    try {
+      const res = await fetch(`/api/meetings/${meetingId}/rechunk`, { method: "POST" });
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}));
+        toast.error((d as { error?: string }).error ?? "备用切割失败，可稍后在会议详情页重试");
+        return;
+      }
+      toast.success("已用备用方式重新切割转写稿");
+      setChunksWarning(null);
+    } catch {
+      toast.error("网络错误，备用切割未执行");
+    } finally {
+      setRechunking(false);
+    }
   };
 
-  const handleReset = () => {
+  // 摘要保存。生成页以前只改本地 state 不落库，用户在这里的编辑一离开页面就没了。
+  const handleSave = async () => {
+    if (!summary || !meetingId) return;
+    setSaving(true);
+    try {
+      const res = await fetch(`/api/meetings/${meetingId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ summary }),
+      });
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}));
+        throw new Error((d as { error?: string }).error ?? "保存失败");
+      }
+      toast.success("摘要已保存");
+      setIsEditing(false);
+    } catch (e) {
+      toast.error(String(e));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleReset = async () => {
     if (phase === "generating") return;
-    if (phase === "complete" && !window.confirm("确认重新生成？当前内容将被清除。")) return;
+    if (phase === "complete" && !window.confirm("确认重新生成？当前会议记录将被删除。")) return;
+
+    // 摘要一旦 done 就已经落库了。不删掉直接重生成会在 DB 里留下一条
+    // 谁也不会再打开的孤儿会议（连带它的 chunks 一起污染项目检索）。
+    if (meetingId) {
+      try {
+        const res = await fetch(`/api/meetings/${meetingId}`, { method: "DELETE" });
+        if (!res.ok) {
+          toast.error("上一条会议记录删除失败，请到项目页手动删除");
+        }
+      } catch {
+        toast.error("上一条会议记录删除失败，请到项目页手动删除");
+      }
+    }
+
     setPhase("idle");
     setSummary(null);
     setStreamingSections([]);
     setStreamingMeta(null);
     setNumberedTranscript(null);
-    setDocumentDiff(null);
     setMeetingId(null);
     setChunksWarning(null);
     setGenerateError(null);
+    setIsEditing(false);
     setQaVisible(false);
     setQaEntered(false);
   };
@@ -219,8 +266,6 @@ export default function MeetingFlow({ projectId, projectDocument, onDiffConfirme
     humanistic_note: null,
   };
 
-  const showDiff = !!projectId && !!projectDocument && phase === "complete" && !!documentDiff;
-
   return (
     <div className="h-full flex flex-col bg-lark-surface">
       {/* Header */}
@@ -247,8 +292,17 @@ export default function MeetingFlow({ projectId, projectDocument, onDiffConfirme
                 }`}
               >
                 <Pencil size={13} />
-                {isEditing ? "完成编辑" : "编辑"}
+                {isEditing ? "取消编辑" : "编辑"}
               </button>
+              {isEditing && (
+                <button
+                  onClick={handleSave}
+                  disabled={saving || !meetingId}
+                  className="px-3 py-1.5 rounded-lg text-sm font-medium bg-lark-blue text-white hover:bg-lark-blue-hover disabled:opacity-50 transition-colors"
+                >
+                  {saving ? "保存中..." : "保存"}
+                </button>
+              )}
               <button
                 onClick={() => window.print()}
                 className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium border border-lark-border text-lark-2 hover:bg-lark-sunken transition-colors"

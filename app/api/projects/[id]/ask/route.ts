@@ -78,6 +78,7 @@ type ChunkRow = {
   meeting_date: string | null;
   search_text: string | null;
   parent_id: string | null;
+  cosine_dist?: number;
 };
 
 type ParentRow = {
@@ -148,7 +149,7 @@ export async function POST(
   if (!userId)
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-  const rl = checkRateLimit(userId, "POST", "POST:/api/projects/ask");
+  const rl = checkRateLimit(userId, "POST:/api/projects/ask");
   if (!rl.allowed) {
     return NextResponse.json(
       { error: "请求过于频繁，请稍后再试（每分钟最多 20 次）" },
@@ -323,7 +324,8 @@ export async function POST(
       allVecStrs.map(
         (vecStr) =>
           prisma.$queryRaw<ChunkRow[]>`
-        SELECT id, meeting_id, chunk_type, section_title, speaker, meeting_date, search_text, parent_id
+        SELECT id, meeting_id, chunk_type, section_title, speaker, meeting_date, search_text, parent_id,
+               embedding <=> ${vecStr}::vector AS cosine_dist
         FROM "Chunk"
         WHERE project_id = ${projectId}
           AND chunk_type = 'summary'
@@ -341,7 +343,8 @@ export async function POST(
         allVecStrs.map(
           (vecStr) =>
             prisma.$queryRaw<ChunkRow[]>`
-          SELECT id, meeting_id, chunk_type, section_title, speaker, meeting_date, search_text, parent_id
+          SELECT id, meeting_id, chunk_type, section_title, speaker, meeting_date, search_text, parent_id,
+                 embedding <=> ${vecStr}::vector AS cosine_dist
           FROM "Chunk"
           WHERE project_id = ${projectId}
             AND chunk_type = 'summary'
@@ -355,7 +358,8 @@ export async function POST(
         allVecStrs.map(
           (vecStr) =>
             prisma.$queryRaw<ChunkRow[]>`
-          SELECT id, meeting_id, chunk_type, section_title, speaker, meeting_date, search_text, parent_id
+          SELECT id, meeting_id, chunk_type, section_title, speaker, meeting_date, search_text, parent_id,
+                 embedding <=> ${vecStr}::vector AS cosine_dist
           FROM "Chunk"
           WHERE project_id = ${projectId}
             AND chunk_type = 'transcript'
@@ -377,7 +381,8 @@ export async function POST(
         allVecStrs.map(
           (vecStr) =>
             prisma.$queryRaw<ChunkRow[]>`
-          SELECT id, meeting_id, chunk_type, section_title, speaker, meeting_date, search_text, parent_id
+          SELECT id, meeting_id, chunk_type, section_title, speaker, meeting_date, search_text, parent_id,
+                 embedding <=> ${vecStr}::vector AS cosine_dist
           FROM "Chunk"
           WHERE project_id = ${projectId}
             AND chunk_type = 'summary'
@@ -392,7 +397,8 @@ export async function POST(
         allVecStrs.map(
           (vecStr) =>
             prisma.$queryRaw<ChunkRow[]>`
-          SELECT id, meeting_id, chunk_type, section_title, speaker, meeting_date, search_text, parent_id
+          SELECT id, meeting_id, chunk_type, section_title, speaker, meeting_date, search_text, parent_id,
+                 embedding <=> ${vecStr}::vector AS cosine_dist
           FROM "Chunk"
           WHERE project_id = ${projectId}
             AND chunk_type = 'transcript'
@@ -411,7 +417,8 @@ export async function POST(
       Promise.all(
         allVecStrs.map((vecStr) =>
           prisma.$queryRaw<ChunkRow[]>`
-          SELECT id, meeting_id, chunk_type, section_title, speaker, meeting_date, search_text, parent_id
+          SELECT id, meeting_id, chunk_type, section_title, speaker, meeting_date, search_text, parent_id,
+                 embedding <=> ${vecStr}::vector AS cosine_dist
           FROM "Chunk"
           WHERE project_id = ${projectId}
             AND chunk_type = 'summary'
@@ -425,7 +432,8 @@ export async function POST(
       Promise.all(
         allVecStrs.map((vecStr) =>
           prisma.$queryRaw<ChunkRow[]>`
-          SELECT id, meeting_id, chunk_type, section_title, speaker, meeting_date, search_text, parent_id
+          SELECT id, meeting_id, chunk_type, section_title, speaker, meeting_date, search_text, parent_id,
+                 embedding <=> ${vecStr}::vector AS cosine_dist
           FROM "Chunk"
           WHERE project_id = ${projectId}
             AND chunk_type = 'transcript'
@@ -444,7 +452,8 @@ export async function POST(
         allVecStrs.map(
           (vecStr) =>
             prisma.$queryRaw<ChunkRow[]>`
-          SELECT id, meeting_id, chunk_type, section_title, speaker, meeting_date, search_text, parent_id
+          SELECT id, meeting_id, chunk_type, section_title, speaker, meeting_date, search_text, parent_id,
+                 embedding <=> ${vecStr}::vector AS cosine_dist
           FROM "Chunk"
           WHERE project_id = ${projectId}
             AND chunk_type = 'summary'
@@ -458,7 +467,8 @@ export async function POST(
         allVecStrs.map(
           (vecStr) =>
             prisma.$queryRaw<ChunkRow[]>`
-          SELECT id, meeting_id, chunk_type, section_title, speaker, meeting_date, search_text, parent_id
+          SELECT id, meeting_id, chunk_type, section_title, speaker, meeting_date, search_text, parent_id,
+                 embedding <=> ${vecStr}::vector AS cosine_dist
           FROM "Chunk"
           WHERE project_id = ${projectId}
             AND chunk_type = 'transcript'
@@ -481,7 +491,8 @@ export async function POST(
           allVecStrs.map(
             (vecStr) =>
               prisma.$queryRaw<ChunkRow[]>`
-          SELECT id, meeting_id, chunk_type, section_title, speaker, meeting_date, search_text, parent_id
+          SELECT id, meeting_id, chunk_type, section_title, speaker, meeting_date, search_text, parent_id,
+                 embedding <=> ${vecStr}::vector AS cosine_dist
           FROM "Chunk"
           WHERE project_id = ${projectId}
             AND chunk_type = 'summary'
@@ -495,7 +506,8 @@ export async function POST(
           allVecStrs.map(
             (vecStr) =>
               prisma.$queryRaw<ChunkRow[]>`
-          SELECT id, meeting_id, chunk_type, section_title, speaker, meeting_date, search_text, parent_id
+          SELECT id, meeting_id, chunk_type, section_title, speaker, meeting_date, search_text, parent_id,
+                 embedding <=> ${vecStr}::vector AS cosine_dist
           FROM "Chunk"
           WHERE project_id = ${projectId}
             AND chunk_type = 'transcript'
@@ -532,6 +544,19 @@ export async function POST(
   }
 
   const retrievalMs = Date.now() - tRetrieval;
+
+  const vecDistMap = new Map<string, (number | null)[]>();
+  const numVecs = allVecs.length;
+  for (const lists of [summaryResultsPerVec, transcriptResultsPerVec]) {
+    for (let vi = 0; vi < lists.length; vi++) {
+      for (const chunk of lists[vi]) {
+        if (!vecDistMap.has(chunk.id)) {
+          vecDistMap.set(chunk.id, new Array(numVecs).fill(null));
+        }
+        vecDistMap.get(chunk.id)![vi] = chunk.cosine_dist ?? null;
+      }
+    }
+  }
 
   const { chunks: rrfChunks, scores: rrfScores } = rrfMerge([
     ...summaryResultsPerVec,
@@ -795,6 +820,7 @@ export async function POST(
           section: c.section_title,
           parent_id: c.parent_id,
           text: (c.search_text ?? "").slice(0, 150),
+          vec_distances: vecDistMap.get(c.id) ?? null,
         })),
         parent_chunks: parentRows.map((p) => ({
           id: p.id,

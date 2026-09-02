@@ -313,17 +313,38 @@ export default function SummaryPanel({
       <div className="mb-7 pb-5 border-b border-lark-border space-y-1.5 text-sm">
         <div className="flex gap-4">
           <span className="text-lark-3 shrink-0">会议时间</span>
-          <EditableSpan
-            value={datetime}
-            isEditing={isEditing}
-            onChange={(val) =>
-              onSummaryChange({
-                ...summary,
-                meta: { ...summary.meta, date: val, time: null },
-              })
-            }
-            className="text-lark-1"
-          />
+          {isEditing ? (
+            // 日期和时间必须分开编辑。合成一个字符串编辑会把 "2026-04-09 10:00"
+            // 整串写回 meta.date，而 meta.date 是 chunk.meeting_date、日期路由、
+            // diff 的 opened_at 的唯一来源，格式一坏全链路都受影响。
+            <div className="flex items-center gap-2">
+              <input
+                type="date"
+                value={date ?? ""}
+                onChange={(e) =>
+                  onSummaryChange({
+                    ...summary,
+                    meta: { ...summary.meta, date: e.target.value || null },
+                  })
+                }
+                className="px-2 py-0.5 rounded-md border border-lark-border bg-lark-surface text-lark-1 text-sm focus:outline-none focus:ring-2 focus:ring-lark-blue/40"
+              />
+              <input
+                type="text"
+                value={time ?? ""}
+                placeholder="开始时间（选填）"
+                onChange={(e) =>
+                  onSummaryChange({
+                    ...summary,
+                    meta: { ...summary.meta, time: e.target.value || null },
+                  })
+                }
+                className="px-2 py-0.5 w-32 rounded-md border border-lark-border bg-lark-surface text-lark-1 text-sm placeholder:text-lark-4 focus:outline-none focus:ring-2 focus:ring-lark-blue/40"
+              />
+            </div>
+          ) : (
+            <span className="text-lark-1">{datetime}</span>
+          )}
         </div>
         <div className="flex gap-4">
           <span className="text-lark-3 shrink-0">参会人员</span>

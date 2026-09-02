@@ -11,7 +11,7 @@ import { useApiKey } from "@/lib/ApiKeyContext";
 
 export default function NewProjectPage() {
   const router = useRouter();
-  const { status: keyStatus, promptApiKey } = useApiKey();
+  const { status: keyStatus, loading: keyLoading, promptApiKey } = useApiKey();
   const [name, setName] = useState("");
   const [referenceText, setReferenceText] = useState("");
   const [noDocument, setNoDocument] = useState(false);
@@ -24,6 +24,7 @@ export default function NewProjectPage() {
 
   const handleCreate = async () => {
     if (!name.trim()) return;
+    if (keyLoading) return; // Key 状态还没查回来就弹窗，会误报“未配置”
     if (!keyStatus.configured) { promptApiKey(); return; }
     setLoading(true);
     setError(null);
