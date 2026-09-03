@@ -4,6 +4,7 @@ import { GeistMono } from "geist/font/mono";
 import "./globals.css";
 import { ClerkProvider } from "@clerk/nextjs";
 import { ApiKeyProvider } from "@/lib/ApiKeyContext";
+import { ConfirmProvider } from "@/lib/ConfirmContext";
 import ApiKeyModal from "./components/ApiKeyModal";
 import { Toaster } from "sonner";
 
@@ -25,9 +26,11 @@ export default function RootLayout({
       >
         <body className="min-h-full flex flex-col">
           <ApiKeyProvider>
-            <ApiKeyModal />
-            {children}
-            <Toaster richColors position="bottom-right" />
+            <ConfirmProvider>
+              <ApiKeyModal />
+              {children}
+              <Toaster richColors position="bottom-right" />
+            </ConfirmProvider>
           </ApiKeyProvider>
         </body>
       </html>

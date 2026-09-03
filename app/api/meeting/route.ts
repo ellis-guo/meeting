@@ -13,6 +13,7 @@ import {
 } from "@/lib/chunking";
 import { checkRateLimit } from "@/lib/ratelimit";
 import { getLangRule } from "@/lib/lang";
+import { SSE_HEADERS, sseFrame as send } from "@/lib/sse";
 
 // ── Streaming JSON helpers ────────────────────────────────────────────────────
 // Extract a complete {...} object starting at `start`. Returns null if incomplete.
@@ -132,9 +133,6 @@ export async function POST(req: NextRequest) {
     time ? `会议时间：${time}` : null,
     `以下是会议记录：\n\n${numbered}`,
   ].filter(Boolean).join("\n\n");
-
-  const encoder = new TextEncoder();
-  const send = (event: string, data: unknown) => encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
 
   const body = new ReadableStream({
     async start(controller) {
@@ -355,7 +353,5 @@ export async function POST(req: NextRequest) {
     },
   });
 
-  return new Response(body, {
-    headers: { "Content-Type": "text/event-stream", "Cache-Control": "no-cache", "Connection": "keep-alive" },
-  });
+  return new Response(body, { headers: SSE_HEADERS });
 }

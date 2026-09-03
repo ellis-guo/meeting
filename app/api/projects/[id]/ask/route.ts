@@ -9,8 +9,7 @@ import { extractJSON } from "@/lib/utils";
 import { ASK_SYSTEM_PROMPT, ANALYZE_SYSTEM_PROMPT } from "@/lib/prompts";
 import { Prisma } from "@/app/generated/prisma/client";
 import { checkRateLimit } from "@/lib/ratelimit";
-
-const SOURCES_SEP = "%%SOURCES%%";
+import { SOURCES_SEP, SSE_HEADERS, sseFrame as send } from "@/lib/sse";
 
 type QueryAnalysis = {
   queries: string[];
@@ -647,10 +646,6 @@ export async function POST(
 
   const userMessage = `${contextParts.join("\n\n===\n\n")}\n\n问题：${question}`;
 
-  const encoder = new TextEncoder();
-  const send = (event: string, data: unknown) =>
-    encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
-
   const body = new ReadableStream({
     async start(controller) {
       // Fire stats queries in parallel with LLM stream — meetingDateIndex
@@ -838,11 +833,5 @@ export async function POST(
     },
   });
 
-  return new Response(body, {
-    headers: {
-      "Content-Type": "text/event-stream",
-      "Cache-Control": "no-cache",
-      Connection: "keep-alive",
-    },
-  });
+  return new Response(body, { headers: SSE_HEADERS });
 }

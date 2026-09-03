@@ -1,19 +1,19 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@clerk/nextjs";
 import { Bell, Check } from "lucide-react";
-
-type Notification = {
-  id: string;
-  type: string;
-  title: string;
-  body: string;
-  link: string;
-  read: boolean;
-  created_at: string;
-};
+import {
+  NotificationItem,
+  getEmptySnapshot,
+  getSnapshot,
+  markAllRead,
+  markRead,
+  noopSubscribe,
+  refresh,
+  subscribe,
+} from "@/lib/notifications";
 
 function timeAgo(iso: string): string {
   const diff = Date.now() - new Date(iso).getTime();
@@ -31,28 +31,14 @@ export default function NotificationBell() {
   const router = useRouter();
   const { isSignedIn } = useAuth();
   const [open, setOpen] = useState(false);
-  const [items, setItems] = useState<Notification[]>([]);
-  const [unread, setUnread] = useState(0);
   const popoverRef = useRef<HTMLDivElement>(null);
 
-  const fetchAll = async () => {
-    try {
-      const res = await fetch("/api/notifications");
-      if (!res.ok) return;
-      const data = await res.json();
-      setItems(data.items ?? []);
-      setUnread(data.unread ?? 0);
-    } catch {
-      /* ignore */
-    }
-  };
-
-  useEffect(() => {
-    if (!isSignedIn) return;
-    fetchAll();
-    const t = setInterval(fetchAll, 60_000); // 每分钟轻量轮询
-    return () => clearInterval(t);
-  }, [isSignedIn]);
+  // 轮询由 store 负责：未登录时订阅一个空 store，不发请求。
+  const { items, unread } = useSyncExternalStore(
+    isSignedIn ? subscribe : noopSubscribe,
+    isSignedIn ? getSnapshot : getEmptySnapshot,
+    getEmptySnapshot,
+  );
 
   useEffect(() => {
     if (!open) return;
@@ -65,35 +51,10 @@ export default function NotificationBell() {
     return () => document.removeEventListener("mousedown", onClick);
   }, [open]);
 
-  const markRead = async (id: string) => {
-    setItems((prev) => prev.map((n) => (n.id === id ? { ...n, read: true } : n)));
-    setUnread((prev) => Math.max(0, prev - 1));
-    await fetch(`/api/notifications/${id}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ read: true }),
-    }).catch(() => {});
-  };
-
-  const handleItemClick = async (n: Notification) => {
+  const handleItemClick = async (n: NotificationItem) => {
     if (!n.read) await markRead(n.id);
     setOpen(false);
     router.push(n.link);
-  };
-
-  const markAllRead = async () => {
-    const unreadIds = items.filter((n) => !n.read).map((n) => n.id);
-    setItems((prev) => prev.map((n) => ({ ...n, read: true })));
-    setUnread(0);
-    await Promise.all(
-      unreadIds.map((id) =>
-        fetch(`/api/notifications/${id}`, {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ read: true }),
-        }).catch(() => {}),
-      ),
-    );
   };
 
   if (!isSignedIn) return null;
@@ -102,7 +63,7 @@ export default function NotificationBell() {
     <div ref={popoverRef} className="relative">
       <button
         onClick={() => {
-          if (!open) fetchAll();
+          if (!open) void refresh();
           setOpen((v) => !v);
         }}
         className="relative w-8 h-8 rounded-full hover:bg-lark-sunken flex items-center justify-center text-lark-2 hover:text-lark-1 transition-colors"
@@ -125,7 +86,7 @@ export default function NotificationBell() {
             <span className="text-sm font-medium text-lark-1">通知</span>
             {unread > 0 && (
               <button
-                onClick={markAllRead}
+                onClick={() => void markAllRead()}
                 className="text-xs text-lark-blue hover:underline flex items-center gap-1"
               >
                 <Check size={12} />

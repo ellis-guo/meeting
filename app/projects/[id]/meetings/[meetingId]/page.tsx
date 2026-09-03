@@ -1,24 +1,36 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { toast } from "sonner";
-import { AlertCircle, ArrowLeft, Pencil, Printer, Trash2, X } from "lucide-react";
+import { AlertCircle, Pencil, Printer, Trash2, X } from "lucide-react";
+import AppHeader from "@/app/components/AppHeader";
 import SummaryPanel from "@/app/components/SummaryPanel";
 import TranscriptPanel from "@/app/components/TranscriptPanel";
 import DiffPanel from "@/app/components/DiffPanel";
 import MeetingAskPanel from "@/app/components/MeetingAskPanel";
-import NotificationBell from "@/app/components/NotificationBell";
 import { Summary, DocumentDiff, ProjectMemory } from "@/app/types";
+import { useConfirm } from "@/lib/ConfirmContext";
 import { addLineNumbers } from "@/lib/utils";
 
 type PopupState = { sourceLines: number[]; x: number; y: number } | null;
+
+const DIFF_PANEL_WIDTH = 520;
+
+/** 浮窗左上角必须留在视野内，窗口缩小后也不能把它推出屏幕。 */
+function clampToViewport(pos: { x: number; y: number }) {
+  return {
+    x: Math.max(0, Math.min(window.innerWidth - 100, pos.x)),
+    y: Math.max(0, Math.min(window.innerHeight - 60, pos.y)),
+  };
+}
 
 export default function MeetingDetailPage() {
   const params = useParams();
   const router = useRouter();
   const searchParams = useSearchParams();
+  const confirm = useConfirm();
   const projectId = params.id as string;
   const meetingId = params.meetingId as string;
   const wantDiff = searchParams.get("diff") === "1";
@@ -48,9 +60,17 @@ export default function MeetingDetailPage() {
   // 首次打开浮窗时设定初始位置（屏幕右上）
   useEffect(() => {
     if (showDiffPanel && diffPos === null && typeof window !== "undefined") {
-      setDiffPos({ x: window.innerWidth - 520 - 24, y: 80 });
+      setDiffPos(clampToViewport({ x: window.innerWidth - DIFF_PANEL_WIDTH - 24, y: 80 }));
     }
   }, [showDiffPanel, diffPos]);
+
+  // 窗口缩小后把浮窗拉回视野，否则它会永久停在屏幕外，只能刷新页面。
+  useEffect(() => {
+    if (!showDiffPanel) return;
+    const onResize = () => setDiffPos((p) => (p ? clampToViewport(p) : p));
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, [showDiffPanel]);
 
   const handleDiffDragStart = (e: React.MouseEvent<HTMLDivElement>) => {
     if (!diffPos) return;
@@ -58,10 +78,10 @@ export default function MeetingDetailPage() {
     const startY = e.clientY;
     const startPos = { ...diffPos };
     const onMove = (ev: MouseEvent) => {
-      setDiffPos({
-        x: Math.max(0, Math.min(window.innerWidth - 100, startPos.x + ev.clientX - startX)),
-        y: Math.max(0, Math.min(window.innerHeight - 60, startPos.y + ev.clientY - startY)),
-      });
+      setDiffPos(clampToViewport({
+        x: startPos.x + ev.clientX - startX,
+        y: startPos.y + ev.clientY - startY,
+      }));
     };
     const onUp = () => {
       document.removeEventListener("mousemove", onMove);
@@ -71,13 +91,13 @@ export default function MeetingDetailPage() {
     document.addEventListener("mouseup", onUp);
   };
 
-  const loadProjectDoc = async () => {
+  const loadProjectDoc = useCallback(async () => {
     const r = await fetch(`/api/projects/${projectId}`);
     if (r.ok) {
       const d = await r.json();
       setProjectDocument(d.document as ProjectMemory);
     }
-  };
+  }, [projectId]);
 
   useEffect(() => {
     fetch(`/api/meetings/${meetingId}`)
@@ -105,7 +125,7 @@ export default function MeetingDetailPage() {
     if (wantDiff && !autoOpenedOnceRef.current && diffStatus === "pending" && documentDiff && !projectDocument) {
       loadProjectDoc();
     }
-  }, [wantDiff, diffStatus, documentDiff, projectDocument]);
+  }, [wantDiff, diffStatus, documentDiff, projectDocument, loadProjectDoc]);
 
   useEffect(() => {
     if (wantDiff && !autoOpenedOnceRef.current && diffStatus === "pending" && documentDiff && projectDocument) {
@@ -163,7 +183,13 @@ export default function MeetingDetailPage() {
   };
 
   const handleDelete = async () => {
-    if (!window.confirm("确认删除这条会议记录？此操作不可撤销。")) return;
+    const ok = await confirm({
+      title: "确认删除这条会议记录？",
+      description: "此操作不可撤销。",
+      confirmLabel: "删除",
+      danger: true,
+    });
+    if (!ok) return;
     setDeleting(true);
     try {
       await fetch(`/api/meetings/${meetingId}`, { method: "DELETE" });
@@ -214,73 +240,66 @@ export default function MeetingDetailPage() {
 
   return (
     <div className="h-screen flex flex-col bg-lark-surface">
-      <header className="flex items-center justify-between px-6 py-3 border-b border-lark-border shrink-0 print:hidden">
-        <div className="flex items-center gap-3">
-          <button
-            onClick={() => router.push(`/projects/${projectId}`)}
-            className="flex items-center gap-1.5 text-sm text-lark-2 hover:text-lark-1 transition-colors"
-          >
-            <ArrowLeft size={14} />
-            返回项目
-          </button>
-          <span className="text-lark-border">|</span>
-          <span className="text-sm text-lark-2">{date}</span>
-        </div>
-        <div className="flex items-center gap-2">
-          {diffStatus === "pending" && documentDiff && !showDiffPanel && (
+      <AppHeader
+        variant="app"
+        back={{ label: "返回项目", onClick: () => router.push(`/projects/${projectId}`) }}
+        title={<span className="text-sm text-lark-2">{date}</span>}
+        actions={
+          <>
+            {diffStatus === "pending" && documentDiff && !showDiffPanel && (
+              <button
+                onClick={openDiffDrawer}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium bg-lark-blue-light text-lark-blue hover:bg-lark-blue-light/70 border border-lark-blue/20 transition-colors"
+              >
+                <AlertCircle size={13} />
+                查看主文档建议
+              </button>
+            )}
             <button
-              onClick={openDiffDrawer}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium bg-lark-blue-light text-lark-blue hover:bg-lark-blue-light/70 border border-lark-blue/20 transition-colors"
+              onClick={() => { setIsEditing((v) => !v); setPopup(null); }}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
+                isEditing
+                  ? "bg-lark-blue text-white"
+                  : "border border-lark-border text-lark-2 hover:bg-lark-sunken"
+              }`}
             >
-              <AlertCircle size={13} />
-              查看主文档建议
+              <Pencil size={13} />
+              {isEditing ? "完成编辑" : "编辑"}
             </button>
-          )}
-          <button
-            onClick={() => { setIsEditing((v) => !v); setPopup(null); }}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
-              isEditing
-                ? "bg-lark-blue text-white"
-                : "border border-lark-border text-lark-2 hover:bg-lark-sunken"
-            }`}
-          >
-            <Pencil size={13} />
-            {isEditing ? "完成编辑" : "编辑"}
-          </button>
-          {isEditing && (
+            {isEditing && (
+              <button
+                onClick={handleSave}
+                disabled={saving}
+                className="px-3 py-1.5 rounded-lg text-sm font-medium bg-lark-blue text-white hover:bg-lark-blue-hover disabled:opacity-50 transition-colors"
+              >
+                {saving ? "保存中..." : "保存"}
+              </button>
+            )}
             <button
-              onClick={handleSave}
-              disabled={saving}
-              className="px-3 py-1.5 rounded-lg text-sm font-medium bg-lark-blue text-white hover:bg-lark-blue-hover disabled:opacity-50 transition-colors"
+              onClick={handleGenerateDiff}
+              disabled={generatingDiff}
+              className="px-3 py-1.5 rounded-lg text-sm font-medium border border-lark-border text-lark-2 hover:bg-lark-sunken disabled:opacity-50 transition-colors"
             >
-              {saving ? "保存中..." : "保存"}
+              {generatingDiff ? "生成中..." : "更新主文档"}
             </button>
-          )}
-          <button
-            onClick={handleGenerateDiff}
-            disabled={generatingDiff}
-            className="px-3 py-1.5 rounded-lg text-sm font-medium border border-lark-border text-lark-2 hover:bg-lark-sunken disabled:opacity-50 transition-colors"
-          >
-            {generatingDiff ? "生成中..." : "更新主文档"}
-          </button>
-          <button
-            onClick={() => window.print()}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium border border-lark-border text-lark-2 hover:bg-lark-sunken transition-colors print:hidden"
-          >
-            <Printer size={13} />
-            导出 PDF
-          </button>
-          <button
-            onClick={handleDelete}
-            disabled={deleting}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium border border-lark-danger/30 text-lark-danger hover:bg-lark-danger/5 disabled:opacity-50 transition-colors"
-          >
-            <Trash2 size={13} />
-            {deleting ? "删除中..." : "删除"}
-          </button>
-          <NotificationBell />
-        </div>
-      </header>
+            <button
+              onClick={() => window.print()}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium border border-lark-border text-lark-2 hover:bg-lark-sunken transition-colors print:hidden"
+            >
+              <Printer size={13} />
+              导出 PDF
+            </button>
+            <button
+              onClick={handleDelete}
+              disabled={deleting}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium border border-lark-danger/30 text-lark-danger hover:bg-lark-danger/5 disabled:opacity-50 transition-colors"
+            >
+              <Trash2 size={13} />
+              {deleting ? "删除中..." : "删除"}
+            </button>
+          </>
+        }
+      />
 
       {diffError && (
         <div className="px-6 py-2 bg-lark-danger/5 border-b border-lark-danger/20 shrink-0">
@@ -317,7 +336,7 @@ export default function MeetingDetailPage() {
           style={{
             left: diffPos.x,
             top: diffPos.y,
-            width: 520,
+            width: DIFF_PANEL_WIDTH,
             height: "min(700px, calc(100vh - 120px))",
             boxShadow: "var(--lark-shadow-modal)",
           }}

@@ -2,11 +2,9 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import Link from "next/link";
-import { ArrowLeft } from "lucide-react";
 import { ProjectMemory } from "@/app/types";
+import AppHeader from "@/app/components/AppHeader";
 import ProjectMemoryPanel from "@/app/components/ProjectMemoryPanel";
-import NotificationBell from "@/app/components/NotificationBell";
 import { useApiKey } from "@/lib/ApiKeyContext";
 
 export default function NewProjectPage() {
@@ -85,19 +83,10 @@ export default function NewProjectPage() {
   if (draft && projectId) {
     return (
       <div className="min-h-screen bg-lark-canvas">
-        <header className="px-6 py-4 border-b border-lark-border bg-lark-surface flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <button
-              onClick={() => setDraft(null)}
-              className="flex items-center gap-1.5 text-sm text-lark-2 hover:text-lark-1 transition-colors"
-            >
-              <ArrowLeft size={14} />
-              返回
-            </button>
-            <span className="text-lark-border">|</span>
-            <span className="text-sm font-medium text-lark-1">确认项目主文档</span>
-          </div>
-          <div className="flex items-center gap-2">
+        <AppHeader
+          back={{ label: "返回", onClick: () => setDraft(null) }}
+          title={<span className="text-sm font-medium text-lark-1">确认项目主文档</span>}
+          actions={
             <button
               onClick={handleConfirmDraft}
               disabled={saving}
@@ -105,9 +94,8 @@ export default function NewProjectPage() {
             >
               {saving ? "保存中..." : "确认并进入项目"}
             </button>
-            <NotificationBell />
-          </div>
-        </header>
+          }
+        />
 
         <div className="max-w-2xl mx-auto px-6 py-8 space-y-5">
           <p className="text-sm text-lark-2">AI 已根据参考文件生成初始主文档，请确认内容后进入项目。</p>
@@ -126,17 +114,10 @@ export default function NewProjectPage() {
   // Creation form
   return (
     <div className="min-h-screen bg-lark-canvas">
-      <header className="px-6 py-4 border-b border-lark-border bg-lark-surface flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <Link href="/" className="flex items-center gap-1.5 text-sm text-lark-2 hover:text-lark-1 transition-colors">
-            <ArrowLeft size={14} />
-            首页
-          </Link>
-          <span className="text-lark-border">|</span>
-          <span className="text-sm font-medium text-lark-1">新建项目</span>
-        </div>
-        <NotificationBell />
-      </header>
+      <AppHeader
+        back={{ label: "首页", href: "/" }}
+        title={<span className="text-sm font-medium text-lark-1">新建项目</span>}
+      />
 
       <div className="max-w-2xl mx-auto px-6 py-8 space-y-5">
         <div className="space-y-2">

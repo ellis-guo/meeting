@@ -4,12 +4,13 @@ import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { toast } from "sonner";
-import { ArrowLeft, Pencil, Printer, Trash2, X } from "lucide-react";
+import { Pencil, Printer, Trash2, X } from "lucide-react";
+import AppHeader from "@/app/components/AppHeader";
 import SummaryPanel from "@/app/components/SummaryPanel";
 import TranscriptPanel from "@/app/components/TranscriptPanel";
 import MeetingAskPanel from "@/app/components/MeetingAskPanel";
-import NotificationBell from "@/app/components/NotificationBell";
 import { Summary } from "@/app/types";
+import { useConfirm } from "@/lib/ConfirmContext";
 import { addLineNumbers } from "@/lib/utils";
 
 type PopupState = { sourceLines: number[]; x: number; y: number } | null;
@@ -17,6 +18,7 @@ type PopupState = { sourceLines: number[]; x: number; y: number } | null;
 export default function StandaloneMeetingDetailPage() {
   const params = useParams();
   const router = useRouter();
+  const confirm = useConfirm();
   const meetingId = params.id as string;
 
   const [summary, setSummary] = useState<Summary | null>(null);
@@ -71,7 +73,13 @@ export default function StandaloneMeetingDetailPage() {
   };
 
   const handleDelete = async () => {
-    if (!window.confirm("确认删除这条会议记录？此操作不可撤销。")) return;
+    const ok = await confirm({
+      title: "确认删除这条会议记录？",
+      description: "此操作不可撤销。",
+      confirmLabel: "删除",
+      danger: true,
+    });
+    if (!ok) return;
     setDeleting(true);
     try {
       await fetch(`/api/meetings/${meetingId}`, { method: "DELETE" });
@@ -103,57 +111,50 @@ export default function StandaloneMeetingDetailPage() {
 
   return (
     <div className="h-screen flex flex-col bg-lark-surface">
-      <header className="flex items-center justify-between px-6 py-3 border-b border-lark-border shrink-0 print:hidden">
-        <div className="flex items-center gap-3">
-          <button
-            onClick={() => router.push("/")}
-            className="flex items-center gap-1.5 text-sm text-lark-2 hover:text-lark-1 transition-colors"
-          >
-            <ArrowLeft size={14} />
-            首页
-          </button>
-          <span className="text-lark-border">|</span>
-          <span className="text-sm text-lark-2">{date}</span>
-        </div>
-        <div className="flex items-center gap-2">
-          <button
-            onClick={() => { setIsEditing((v) => !v); setPopup(null); }}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
-              isEditing
-                ? "bg-lark-blue text-white"
-                : "border border-lark-border text-lark-2 hover:bg-lark-sunken"
-            }`}
-          >
-            <Pencil size={13} />
-            {isEditing ? "完成编辑" : "编辑"}
-          </button>
-          {isEditing && (
+      <AppHeader
+        variant="app"
+        back={{ label: "首页", onClick: () => router.push("/") }}
+        title={<span className="text-sm text-lark-2">{date}</span>}
+        actions={
+          <>
             <button
-              onClick={handleSave}
-              disabled={saving}
-              className="px-3 py-1.5 rounded-lg text-sm font-medium bg-lark-blue text-white hover:bg-lark-blue-hover disabled:opacity-50 transition-colors"
+              onClick={() => { setIsEditing((v) => !v); setPopup(null); }}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
+                isEditing
+                  ? "bg-lark-blue text-white"
+                  : "border border-lark-border text-lark-2 hover:bg-lark-sunken"
+              }`}
             >
-              {saving ? "保存中..." : "保存"}
+              <Pencil size={13} />
+              {isEditing ? "完成编辑" : "编辑"}
             </button>
-          )}
-          <button
-            onClick={() => window.print()}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium border border-lark-border text-lark-2 hover:bg-lark-sunken transition-colors"
-          >
-            <Printer size={13} />
-            导出 PDF
-          </button>
-          <button
-            onClick={handleDelete}
-            disabled={deleting}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium border border-lark-danger/30 text-lark-danger hover:bg-lark-danger/5 disabled:opacity-50 transition-colors"
-          >
-            <Trash2 size={13} />
-            {deleting ? "删除中..." : "删除"}
-          </button>
-          <NotificationBell />
-        </div>
-      </header>
+            {isEditing && (
+              <button
+                onClick={handleSave}
+                disabled={saving}
+                className="px-3 py-1.5 rounded-lg text-sm font-medium bg-lark-blue text-white hover:bg-lark-blue-hover disabled:opacity-50 transition-colors"
+              >
+                {saving ? "保存中..." : "保存"}
+              </button>
+            )}
+            <button
+              onClick={() => window.print()}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium border border-lark-border text-lark-2 hover:bg-lark-sunken transition-colors"
+            >
+              <Printer size={13} />
+              导出 PDF
+            </button>
+            <button
+              onClick={handleDelete}
+              disabled={deleting}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium border border-lark-danger/30 text-lark-danger hover:bg-lark-danger/5 disabled:opacity-50 transition-colors"
+            >
+              <Trash2 size={13} />
+              {deleting ? "删除中..." : "删除"}
+            </button>
+          </>
+        }
+      />
 
       <div className="flex flex-1 overflow-hidden min-h-0">
         <div className="w-1/2 print:w-full overflow-y-auto border-r border-lark-border print:border-none p-6 print:p-8">

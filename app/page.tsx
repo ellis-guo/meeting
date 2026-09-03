@@ -5,7 +5,7 @@ import Link from "next/link";
 import { UserButton } from "@clerk/nextjs";
 import { Plus, Settings, FileText, ChevronRight } from "lucide-react";
 import { Project } from "./types";
-import NotificationBell from "./components/NotificationBell";
+import AppHeader from "./components/AppHeader";
 
 type StandaloneMeeting = { id: string; created_at: string; date: string | null };
 
@@ -28,27 +28,28 @@ export default function Home() {
 
   return (
     <div className="min-h-screen bg-lark-canvas">
-      <header className="px-6 py-4 border-b border-lark-border bg-lark-surface flex items-center justify-between">
-        <h1 className="text-sm font-semibold text-lark-1">会议总结</h1>
-        <div className="flex items-center gap-2">
-          <Link
-            href="/settings"
-            className="p-1.5 rounded-lg text-lark-3 hover:text-lark-2 hover:bg-lark-sunken transition-colors"
-            title="设置"
-          >
-            <Settings size={17} />
-          </Link>
-          <Link
-            href="/projects/new"
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium bg-lark-blue text-white hover:bg-lark-blue-hover transition-colors"
-          >
-            <Plus size={14} />
-            新建项目
-          </Link>
-          <NotificationBell />
-          <UserButton />
-        </div>
-      </header>
+      <AppHeader
+        title={<h1 className="text-sm font-semibold text-lark-1">会议总结</h1>}
+        actions={
+          <>
+            <Link
+              href="/settings"
+              className="p-1.5 rounded-lg text-lark-3 hover:text-lark-2 hover:bg-lark-sunken transition-colors"
+              title="设置"
+            >
+              <Settings size={17} />
+            </Link>
+            <Link
+              href="/projects/new"
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium bg-lark-blue text-white hover:bg-lark-blue-hover transition-colors"
+            >
+              <Plus size={14} />
+              新建项目
+            </Link>
+          </>
+        }
+        trailing={<UserButton />}
+      />
 
       <main className="max-w-4xl mx-auto px-6 py-8 space-y-8">
         {/* Standalone meeting entry */}

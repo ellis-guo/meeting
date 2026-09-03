@@ -1,11 +1,10 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import Link from "next/link";
 import { toast } from "sonner";
-import { ArrowLeft } from "lucide-react";
-import NotificationBell from "@/app/components/NotificationBell";
+import AppHeader from "@/app/components/AppHeader";
 import { useApiKey } from "@/lib/ApiKeyContext";
+import { useConfirm } from "@/lib/ConfirmContext";
 
 function formatExpiry(date: Date): string {
   const diff = date.getTime() - Date.now();
@@ -25,6 +24,7 @@ const LANG_OPTIONS: { value: Lang; label: string; desc: string }[] = [
 
 export default function SettingsPage() {
   const { status, setApiKey, clearKey } = useApiKey();
+  const confirm = useConfirm();
   const [changing, setChanging] = useState(false);
   const [input, setInput] = useState("");
   const [saving, setSaving] = useState(false);
@@ -57,9 +57,15 @@ export default function SettingsPage() {
     }
   };
 
-  const handleClearKey = () => {
-    if (!window.confirm("确认清除 API Key？清除后将无法使用 AI 功能，直到重新配置。")) return;
-    clearKey();
+  const handleClearKey = async () => {
+    const ok = await confirm({
+      title: "确认清除 API Key？",
+      description: "清除后将无法使用 AI 功能，直到重新配置。",
+      confirmLabel: "清除",
+      danger: true,
+    });
+    if (!ok) return;
+    await clearKey();
     toast.success("API Key 已清除");
   };
 
@@ -80,17 +86,10 @@ export default function SettingsPage() {
 
   return (
     <div className="min-h-screen bg-lark-canvas">
-      <header className="px-6 py-4 border-b border-lark-border bg-lark-surface flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <Link href="/" className="flex items-center gap-1.5 text-sm text-lark-2 hover:text-lark-1 transition-colors">
-            <ArrowLeft size={14} />
-            首页
-          </Link>
-          <span className="text-lark-border">|</span>
-          <span className="text-sm font-medium text-lark-1">设置</span>
-        </div>
-        <NotificationBell />
-      </header>
+      <AppHeader
+        back={{ label: "首页", href: "/" }}
+        title={<span className="text-sm font-medium text-lark-1">设置</span>}
+      />
 
       <div className="max-w-lg mx-auto px-6 py-8 space-y-5">
         {/* API Key section */}

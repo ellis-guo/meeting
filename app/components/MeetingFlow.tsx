@@ -3,13 +3,15 @@
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { Pencil, Printer, RotateCcw, X } from "lucide-react";
+import AppHeader from "./AppHeader";
 import SummaryPanel from "./SummaryPanel";
 import TranscriptPanel from "./TranscriptPanel";
 import MeetingAskPanel from "./MeetingAskPanel";
-import NotificationBell from "./NotificationBell";
 import { Summary, Section } from "../types";
 import { addLineNumbers } from "@/lib/utils";
 import { useApiKey } from "@/lib/ApiKeyContext";
+import { useConfirm } from "@/lib/ConfirmContext";
+import { readSSE } from "@/lib/sse";
 
 type Phase = "idle" | "generating" | "complete";
 type PopupState = { sourceLines: number[]; x: number; y: number } | null;
@@ -24,6 +26,7 @@ interface Props {
 
 export default function MeetingFlow({ projectId }: Props) {
   const { status: keyStatus, loading: keyLoading, promptApiKey } = useApiKey();
+  const confirm = useConfirm();
 
   const [transcriptInput, setTranscriptInput] = useState("");
   const [dateInput, setDateInput] = useState("");
@@ -95,43 +98,23 @@ export default function MeetingFlow({ projectId }: Props) {
         return;
       }
 
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
-      let buf = "";
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buf += decoder.decode(value, { stream: true });
-
-        const blocks = buf.split("\n\n");
-        buf = blocks.pop() ?? "";
-
-        for (const block of blocks) {
-          const event = block.match(/^event: (\w+)/)?.[1];
-          const dataStr = block.match(/^data: (.+)$/m)?.[1];
-          if (!event || !dataStr) continue;
-
-          try {
-            const data = JSON.parse(dataStr);
-            if (event === "meta") {
-              setStreamingMeta(data as Meta);
-            } else if (event === "section") {
-              setStreamingSections((prev) => [...prev, data as Section]);
-            } else if (event === "done") {
-              setSummary(data.summary as Summary);
-              // document_diff 不再随 SSE 返回，由后台异步生成并落库；
-              // 项目会议在详情页通过 meeting.document_diff 渲染 DiffPanel。
-              setMeetingId(data.meeting_id ?? null);
-              setChunksWarning(data.chunks_warning ?? null);
-              setPhase("complete");
-            } else if (event === "error") {
-              setGenerateError((data as { error?: string }).error ?? "生成失败，请重试");
-              setPhase("idle");
-            }
-          } catch { /* skip malformed event */ }
+      await readSSE(res.body, (event, data) => {
+        if (event === "meta") {
+          setStreamingMeta(data as unknown as Meta);
+        } else if (event === "section") {
+          setStreamingSections((prev) => [...prev, data as unknown as Section]);
+        } else if (event === "done") {
+          setSummary(data.summary as Summary);
+          // document_diff 不再随 SSE 返回，由后台异步生成并落库；
+          // 项目会议在详情页通过 meeting.document_diff 渲染 DiffPanel。
+          setMeetingId((data.meeting_id as string | null) ?? null);
+          setChunksWarning((data.chunks_warning as ChunksWarning | null) ?? null);
+          setPhase("complete");
+        } else if (event === "error") {
+          setGenerateError((data.error as string | undefined) ?? "生成失败，请重试");
+          setPhase("idle");
         }
-      }
+      });
     } catch (e) {
       setGenerateError(String(e));
       setPhase("idle");
@@ -182,7 +165,15 @@ export default function MeetingFlow({ projectId }: Props) {
 
   const handleReset = async () => {
     if (phase === "generating") return;
-    if (phase === "complete" && !window.confirm("确认重新生成？当前会议记录将被删除。")) return;
+    if (phase === "complete") {
+      const ok = await confirm({
+        title: "确认重新生成？",
+        description: "当前会议记录将被删除。",
+        confirmLabel: "重新生成",
+        danger: true,
+      });
+      if (!ok) return;
+    }
 
     // 摘要一旦 done 就已经落库了。不删掉直接重生成会在 DB 里留下一条
     // 谁也不会再打开的孤儿会议（连带它的 chunks 一起污染项目检索）。
@@ -269,19 +260,16 @@ export default function MeetingFlow({ projectId }: Props) {
   return (
     <div className="h-full flex flex-col bg-lark-surface">
       {/* Header */}
-      <header className="flex items-center justify-between px-6 py-3 border-b border-lark-border shrink-0 print:hidden">
-        <div className="flex items-center gap-3">
-          <button
-            onClick={handleReset}
-            disabled={phase === "generating"}
-            className="flex items-center gap-1.5 text-sm text-lark-2 hover:text-lark-1 disabled:opacity-40 transition-colors"
-          >
-            <RotateCcw size={13} />
-            重新生成
-          </button>
-        </div>
-        <div className="flex items-center gap-2">
-          {phase === "complete" && (
+      <AppHeader
+        variant="app"
+        back={{
+          label: "重新生成",
+          icon: <RotateCcw size={13} />,
+          onClick: () => void handleReset(),
+          disabled: phase === "generating",
+        }}
+        actions={
+          phase === "complete" && (
             <>
               <button
                 onClick={() => { setIsEditing((v) => !v); setPopup(null); }}
@@ -311,10 +299,9 @@ export default function MeetingFlow({ projectId }: Props) {
                 导出 PDF
               </button>
             </>
-          )}
-          <NotificationBell />
-        </div>
-      </header>
+          )
+        }
+      />
 
       {/* Two-pane content */}
       <div className="flex flex-1 overflow-hidden min-h-0">
