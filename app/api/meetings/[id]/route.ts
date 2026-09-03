@@ -4,6 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { decrypt, encryptJSON, decryptJSON } from "@/lib/crypto";
 import { getDashScopeKey } from "@/lib/apiKey.server";
 import { reindexSummaryChunks, type Summary } from "@/lib/chunking";
+import { numberedLineCount } from "@/lib/utils";
 import { deleteMeetingCascade } from "@/lib/cascade";
 
 export async function GET(
@@ -83,7 +84,11 @@ export async function PATCH(
   // 摘要变了，检索索引也得跟着变。放后台跑（要调 embedding），失败记 ProcessingLog。
   const apiKey = (await getDashScopeKey()) ?? "";
   if (apiKey) {
-    reindexSummaryChunks(id, meeting.project_id, typed, apiKey).catch(async (e) => {
+    // source_lines 的校验基准。解不开逐字稿就传 null：跳过越界校验，
+    // 总比把用户这次编辑之外、本来正确的锚点全清掉好。
+    let lineCount: number | null = null;
+    try { lineCount = numberedLineCount(decrypt(meeting.transcript)); } catch { /* 保持 null */ }
+    reindexSummaryChunks(id, meeting.project_id, typed, apiKey, lineCount).catch(async (e) => {
       await prisma.processingLog
         .create({
           data: {

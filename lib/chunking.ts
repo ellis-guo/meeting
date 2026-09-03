@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import { encryptJSON } from "@/lib/crypto";
 import { fetchEmbeddings } from "@/lib/dashscope";
+import { numberedLines } from "@/lib/utils";
 
 export const PARENT_WINDOW = 5;
 
@@ -42,19 +43,56 @@ function renderSectionText(section: Section): string {
   return `${c.columns.join(" | ")}\n${c.rows.map((r) => r.cells.join(" | ")).join("\n")}`;
 }
 
-function collectSourceLines(section: Section): number[] {
+/** 一个 section 里所有 source_lines 数组的原样集合（未校验）。 */
+function sectionRawLines(section: Section): unknown[] {
   const c = section.content;
-  const safe = (v: unknown): number[] => Array.isArray(v) ? (v as number[]) : [];
-  if (c.type === "text") return safe(c.source_lines);
+  if (c.type === "text") return [c.source_lines];
   if (c.type === "bullets") return c.items.flatMap((i) => [
-    ...safe(i.source_lines),
-    ...(i.sub_items?.flatMap((s) => safe(s.source_lines)) ?? []),
+    i.source_lines,
+    ...(i.sub_items?.map((s) => s.source_lines) ?? []),
   ]);
-  return c.rows.flatMap((r) => safe(r.source_lines));
+  return c.rows.map((r) => r.source_lines);
 }
 
-export function buildSummaryChunks(summary: Summary, meetingId: string, projectId?: string): ChunkInput[] {
+/**
+ * 校验模型给出的 source_lines，只保留 1..totalLines 范围内的整数。
+ *
+ * prompts.ts 的 RULES 第 3 条写着"必须引用原文中真实存在的行号，禁止虚构"，
+ * 但那是祈使句、不是校验。模型报一个越界行号时，下面的 Math.min/max 会把它
+ * 原样写进 line_start，溯源浮窗跳到空处——而界面上它和正确的锚点长得一模一样，
+ * 用户没有任何办法分辨。宁可没有锚点（前端已按 line_start == null 降级成不可
+ * 点击），也不要一个错的锚点。
+ *
+ * totalLines 传 null = 拿不到逐字稿（解密失败等），跳过越界校验：把本来正确的
+ * 锚点全清掉比留着更糟。非整数、<1 的值在任何情况下都丢弃。
+ */
+function pickLines(raws: unknown[], totalLines: number | null): { lines: number[]; dropped: number } {
+  const lines: number[] = [];
+  let dropped = 0;
+  for (const raw of raws) {
+    if (!Array.isArray(raw)) continue;
+    for (const v of raw) {
+      // 模型偶发把行号写成字符串 "42"；真正的垃圾会变成 NaN，一并计入 dropped
+      const n = typeof v === "number" ? v : Number(v);
+      if (Number.isInteger(n) && n >= 1 && (totalLines === null || n <= totalLines)) lines.push(n);
+      else dropped++;
+    }
+  }
+  return { lines, dropped };
+}
+
+/**
+ * 摘要 → chunks。totalLines 是 source_lines 的校验基准，见 pickLines；
+ * 返回的 droppedLines 是被丢弃的越界/非法行号个数，调用方负责记日志。
+ */
+export function buildSummaryChunks(
+  summary: Summary,
+  meetingId: string,
+  projectId: string | undefined,
+  totalLines: number | null,
+): { chunks: ChunkInput[]; droppedLines: number } {
   const chunks: ChunkInput[] = [];
+  let droppedLines = 0;
   for (const section of summary.sections) {
     const c = section.content;
     if (section.title === "议题详情" && c.type === "bullets" && c.items.length >= 2) {
@@ -62,10 +100,11 @@ export function buildSummaryChunks(summary: Summary, meetingId: string, projectI
         const subText = item.sub_items?.map((s) => `  - ${s.text}`).join("\n") ?? "";
         const itemText = subText ? `- ${item.text}\n${subText}` : `- ${item.text}`;
         const plainText = `${section.title}\n${itemText}`;
-        const lines = [
-          ...item.source_lines,
-          ...(item.sub_items?.flatMap((s) => s.source_lines) ?? []),
-        ];
+        const { lines, dropped } = pickLines([
+          item.source_lines,
+          ...(item.sub_items?.map((s) => s.source_lines) ?? []),
+        ], totalLines);
+        droppedLines += dropped;
         chunks.push({
           meeting_id: meetingId, project_id: projectId ?? null, chunk_type: "summary",
           content: plainText, search_text: plainText, section_title: section.title,
@@ -77,7 +116,8 @@ export function buildSummaryChunks(summary: Summary, meetingId: string, projectI
       }
     } else {
       const plainText = `${section.title}\n${renderSectionText(section)}`;
-      const lines = collectSourceLines(section);
+      const { lines, dropped } = pickLines(sectionRawLines(section), totalLines);
+      droppedLines += dropped;
       chunks.push({
         meeting_id: meetingId, project_id: projectId ?? null, chunk_type: "summary",
         content: plainText, search_text: plainText, section_title: section.title,
@@ -88,7 +128,7 @@ export function buildSummaryChunks(summary: Summary, meetingId: string, projectI
       });
     }
   }
-  return chunks;
+  return { chunks, droppedLines };
 }
 
 const TENCENT_TURN = /^(.+?)\((\d{2}:\d{2}:\d{2})\):\s*(.+)/;
@@ -110,7 +150,7 @@ export function buildTranscriptChunks(
   projectId?: string,
   meetingDate?: string,
 ): { chunks: ChunkInput[]; matchedLines: number; totalLines: number } {
-  const lines = transcript.split("\n").filter((l) => l.trim());
+  const lines = numberedLines(transcript);
   const turns: Turn[] = [];
   let matchedLines = 0;
   for (let i = 0; i < lines.length; i++) {
@@ -172,6 +212,7 @@ export async function reindexSummaryChunks(
   projectId: string | null,
   summary: Summary,
   apiKey: string,
+  totalLines: number | null,
 ): Promise<void> {
   // 会议日期可能被一起改了。transcript chunks 的正文没变不用重新 embed，
   // 但 meeting_date 必须同步，否则按日期过滤的检索会漏掉这次会议的逐字稿。
@@ -188,7 +229,18 @@ export async function reindexSummaryChunks(
   await prisma.chunk.deleteMany({
     where: { meeting_id: meetingId, chunk_type: "summary" },
   });
-  const inputs = buildSummaryChunks(summary, meetingId, projectId ?? undefined);
+  const { chunks: inputs, droppedLines } = buildSummaryChunks(
+    summary, meetingId, projectId ?? undefined, totalLines,
+  );
+  if (droppedLines > 0) {
+    await prisma.processingLog.create({
+      data: {
+        level: "warn",
+        meeting_id: meetingId,
+        context: encryptJSON({ type: "source_lines_out_of_range", dropped: droppedLines, total_lines: totalLines }),
+      },
+    }).catch(() => {});
+  }
   if (inputs.length === 0) return;
   const created = await insertChunks(inputs);
   await embedAndStore(created, meetingId, apiKey);

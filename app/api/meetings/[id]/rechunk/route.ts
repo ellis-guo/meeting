@@ -11,6 +11,7 @@ import {
   buildAndStoreParents,
 } from "@/lib/chunking";
 import { checkRateLimit } from "@/lib/ratelimit";
+import { numberedLines } from "@/lib/utils";
 
 /**
  * 备用切割：转写稿不是腾讯会议格式（说话人(HH:MM:SS): 内容）时，
@@ -23,9 +24,9 @@ function buildFallbackChunks(
   meetingDate: string | null,
 ): ChunkInput[] {
   const MAX_CHARS = 300;
-  // 必须与 addLineNumbers / buildTranscriptChunks 一样过滤空行，
-  // 否则这里算出的 line_start/line_end 会比前端显示的行号多算上空行，溯源跳转全部错位。
-  const lines = transcript.split("\n").filter((l) => l.trim() !== "");
+  // 行号基准必须和喂给模型的带号原文一致，否则算出的 line_start/line_end 会把
+  // 空行也算进去，溯源跳转全部错位。基准的唯一定义在 utils.numberedLines。
+  const lines = numberedLines(transcript);
   const chunks: ChunkInput[] = [];
   let buffer = "";
   let lineStart = 1;

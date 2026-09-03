@@ -217,15 +217,24 @@ export async function POST(req: NextRequest) {
 
         // Build & save chunks (synchronous so the user can rely on summary
         // sources immediately after `done`)
-        const summaryChunkInputs = buildSummaryChunks(typedSummary, meeting.id, project_id);
+        // 顺序有意：totalLines 由逐字稿切分算出（过滤空行后从 1 开始，和喂给
+        // 模型的 addLineNumbers 同一基准），summary 的 source_lines 要按它校验。
         const { chunks: transcriptChunkInputs, matchedLines, totalLines } =
           buildTranscriptChunks(transcript, meeting.id, project_id, meetingDate);
+        const { chunks: summaryChunkInputs, droppedLines } =
+          buildSummaryChunks(typedSummary, meeting.id, project_id, totalLines);
 
         const formatOk = totalLines === 0 || matchedLines / totalLines >= 0.3;
         let chunks_warning: { matched_lines: number; total_lines: number } | undefined;
         if (!formatOk) {
           chunks_warning = { matched_lines: matchedLines, total_lines: totalLines };
           await prisma.processingLog.create({ data: { level: "warn", meeting_id: meeting.id, context: encryptJSON({ type: "transcript_format_mismatch", matched_lines: matchedLines, total_lines: totalLines }) } });
+        }
+
+        // 模型报了原文里不存在的行号。锚点已被丢弃（宁可没有也不要错的），
+        // 但要留痕：这是 prompt 质量的直接信号，静默丢掉就再也发现不了。
+        if (droppedLines > 0) {
+          await prisma.processingLog.create({ data: { level: "warn", meeting_id: meeting.id, context: encryptJSON({ type: "source_lines_out_of_range", dropped: droppedLines, total_lines: totalLines }) } }).catch(() => {});
         }
 
         const chunksToInsert = formatOk ? [...summaryChunkInputs, ...transcriptChunkInputs] : summaryChunkInputs;

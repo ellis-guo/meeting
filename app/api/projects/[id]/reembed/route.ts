@@ -65,20 +65,24 @@ export async function POST(
       continue;
     }
 
-    // 3. 重建 summary chunks
-    const summaryChunks = buildSummaryChunks(summary, meeting.id, projectId);
-
-    // 4. 重建 transcript chunks（speaker-turn 格式）
-    let transcriptText = "";
+    // 3. 解密逐字稿 + 重建 transcript chunks（speaker-turn 格式）。
+    //    必须排在 summary chunks 之前：后者的 source_lines 要按 totalLines 校验。
+    let transcriptText: string | null = null;
     try {
       transcriptText = decrypt(meeting.transcript);
     } catch { /* skip transcript if decrypt fails */ }
 
     const { chunks: transcriptChunks, matchedLines, totalLines } = buildTranscriptChunks(
-      transcriptText,
+      transcriptText ?? "",
       meeting.id,
       projectId,
       summary.meta.date ?? undefined,
+    );
+
+    // 4. 重建 summary chunks。逐字稿解不开就传 null 跳过越界校验——这条路径是
+    //    "重建索引"，把原本正确的锚点整批清掉比留着更糟。
+    const { chunks: summaryChunks } = buildSummaryChunks(
+      summary, meeting.id, projectId, transcriptText === null ? null : totalLines,
     );
 
     const formatOk = totalLines === 0 || matchedLines / totalLines >= 0.3;
