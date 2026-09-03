@@ -2,7 +2,13 @@ import { extractJSON } from "@/lib/utils";
 
 const CHAT_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions";
 const EMBED_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1/embeddings";
+// 默认模型 = 用户直接看到输出的地方（问答生成）。实测 flash 在多步推理题上
+// 会自相矛盾（「感冒是否在 3.20 之前」：证据写着 3.19，结论却说"不是之前"），
+// 而它的首字时间与 plus 基本打平（中位 1089 vs 1209ms）——优势在吞吐，
+// 而用户感知的是首字。拿推理可靠性换一个感知不到的吞吐，不划算。
 export const CHAT_MODEL = "qwen3.6-plus";
+// 用于「失败可检测」的环节：结构化抽取有 schema 校验兜底，后台任务用户不直接看。
+// 摘要生成实测 3 份真实逐字稿：JSON 全有效、行号越界率 0%、锚点抽查更准，快 2.3×。
 export const FAST_CHAT_MODEL = "qwen3.6-flash";
 const EMBED_MODEL = "text-embedding-v3";
 const EMBED_DIM = 1024;

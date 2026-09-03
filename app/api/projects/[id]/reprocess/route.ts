@@ -3,7 +3,7 @@ import { auth } from "@clerk/nextjs/server";
 import { prisma } from "@/lib/prisma";
 import { decryptJSON } from "@/lib/crypto";
 import { getDashScopeKey } from "@/lib/apiKey.server";
-import { callDashScope } from "@/lib/dashscope";
+import { callDashScope, FAST_CHAT_MODEL } from "@/lib/dashscope";
 import { extractJSON } from "@/lib/utils";
 import { MEMORY_INIT_PROMPT } from "@/lib/prompts";
 import { getLangRule } from "@/lib/lang";
@@ -51,7 +51,7 @@ export async function POST(
 
   let document_draft: unknown;
   try {
-    const content = (await callDashScope(MEMORY_INIT_PROMPT, `${getLangRule(req)}\n\n项目参考文件：\n\n${fileContent}`, apiKey)).content;
+    const content = (await callDashScope(MEMORY_INIT_PROMPT, `${getLangRule(req)}\n\n项目参考文件：\n\n${fileContent}`, apiKey, FAST_CHAT_MODEL)).content;
     document_draft = extractJSON(content);
   } catch {
     return NextResponse.json(

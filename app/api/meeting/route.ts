@@ -4,7 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { addLineNumbers, extractJSON } from "@/lib/utils";
 import { encrypt, encryptJSON, decryptJSON } from "@/lib/crypto";
 import { getDashScopeKey } from "@/lib/apiKey.server";
-import { callDashScope, callDashScopeStream } from "@/lib/dashscope";
+import { callDashScope, callDashScopeStream, FAST_CHAT_MODEL } from "@/lib/dashscope";
 import { SUMMARY_SMART_PROMPT, SUMMARY_PROGRESS_PROMPT, MEMORY_DIFF_PROMPT } from "@/lib/prompts";
 import { validateDiff } from "@/lib/projectDocSchema";
 import {
@@ -144,6 +144,7 @@ export async function POST(req: NextRequest) {
         // Stream LLM; after each token that closes a brace, check for newly complete sections/meta
         let summaryContent: string;
         try {
+          // 第 5 个参数 sep 必须显式传 ""——model 排在它后面，漏了会静默用回默认模型
           summaryContent = (await callDashScopeStream(systemPrompt, contextLines, apiKey, (token) => {
             accumulated += token;
             if (!token.includes("}")) return;
@@ -158,7 +159,7 @@ export async function POST(req: NextRequest) {
               controller.enqueue(send("section", section));
               emittedSectionCount++;
             }
-          })).fullText;
+          }, "", FAST_CHAT_MODEL)).fullText;
         } catch (e) {
           controller.enqueue(send("error", { error: String(e) }));
           controller.close();
@@ -271,7 +272,7 @@ export async function POST(req: NextRequest) {
             // 一次完整尝试 = 调 LLM + extractJSON + schema 校验。
             // 任一步失败均视作失败，进入下一次重试。
             const tryGenerate = async (): Promise<unknown> => {
-              const raw = (await callDashScope(MEMORY_DIFF_PROMPT, diffPrompt, apiKey)).content;
+              const raw = (await callDashScope(MEMORY_DIFF_PROMPT, diffPrompt, apiKey, FAST_CHAT_MODEL)).content;
               const parsed = extractJSON(raw);
               const err = validateDiff(parsed);
               if (err) throw new Error(`Diff schema invalid: ${err}`);

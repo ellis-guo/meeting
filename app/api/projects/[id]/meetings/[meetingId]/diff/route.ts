@@ -3,7 +3,7 @@ import { auth } from "@clerk/nextjs/server";
 import { prisma } from "@/lib/prisma";
 import { decryptJSON, encryptJSON } from "@/lib/crypto";
 import { getDashScopeKey } from "@/lib/apiKey.server";
-import { callDashScope } from "@/lib/dashscope";
+import { callDashScope, FAST_CHAT_MODEL } from "@/lib/dashscope";
 import { extractJSON } from "@/lib/utils";
 import { MEMORY_DIFF_PROMPT } from "@/lib/prompts";
 import { validateDiff } from "@/lib/projectDocSchema";
@@ -68,6 +68,7 @@ export async function POST(
       MEMORY_DIFF_PROMPT,
       `${langRule}\n\n会议日期：${meetingDate}\n\n当前项目主文档：\n${JSON.stringify(projectDocument, null, 2)}\n\n本次会议摘要：\n${JSON.stringify(summary, null, 2)}\n\n请输出需要更新的字段及建议内容。`,
       apiKey,
+      FAST_CHAT_MODEL,
     )).content;
   } catch (e) {
     return NextResponse.json({ error: String(e) }, { status: 502 });

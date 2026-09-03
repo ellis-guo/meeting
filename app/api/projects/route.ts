@@ -3,7 +3,7 @@ import { auth } from "@clerk/nextjs/server";
 import { prisma } from "@/lib/prisma";
 import { encryptJSON } from "@/lib/crypto";
 import { getDashScopeKey } from "@/lib/apiKey.server";
-import { callDashScope } from "@/lib/dashscope";
+import { callDashScope, FAST_CHAT_MODEL } from "@/lib/dashscope";
 import { extractJSON } from "@/lib/utils";
 import { MEMORY_INIT_PROMPT } from "@/lib/prompts";
 import { getLangRule } from "@/lib/lang";
@@ -15,7 +15,7 @@ async function generateDocumentFromFiles(
   langRule: string,
 ): Promise<unknown> {
   const fileContent = referenceFiles.join("\n\n---\n\n");
-  const content = (await callDashScope(MEMORY_INIT_PROMPT, `${langRule}\n\n项目参考文件：\n\n${fileContent}`, apiKey)).content;
+  const content = (await callDashScope(MEMORY_INIT_PROMPT, `${langRule}\n\n项目参考文件：\n\n${fileContent}`, apiKey, FAST_CHAT_MODEL)).content;
   return extractJSON(content);
 }
 
