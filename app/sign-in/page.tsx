@@ -15,16 +15,18 @@ export default function SignInPage() {
 
   const busy = fetchStatus === "fetching";
 
+  // Clerk 会把错误分派到 errors.fields（字段级，渲染在各输入框下面）和
+  // errors.global（解析不出字段归属的）。这里只补应用自己的本地文案，
+  // 不再手动存一份 Clerk 错误，否则同一句会在字段下和表单底部各显示一次。
+  const formError = errors?.global?.[0]?.message ?? topError;
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!signIn) return;
     setTopError("");
 
     const { error } = await signIn.password({ emailAddress: email, password });
-    if (error) {
-      setTopError(error.longMessage ?? error.message ?? "邮箱或密码错误");
-      return;
-    }
+    if (error) return;
 
     if (signIn.status === "complete") {
       await signIn.finalize({
@@ -84,7 +86,7 @@ export default function SignInPage() {
             )}
           </div>
 
-          {topError && <p className="text-xs text-lark-danger">{topError}</p>}
+          {formError && <p className="text-xs text-lark-danger">{formError}</p>}
 
           <button
             type="submit"

@@ -16,6 +16,10 @@ export default function SignUpPage() {
 
   const busy = fetchStatus === "fetching";
 
+  // 同 sign-in：Clerk 错误已分派到 errors.fields / errors.global，
+  // 这里不再手动复制一份，否则同一句会显示两遍。topError 只放本地文案。
+  const formError = errors?.global?.[0]?.message ?? topError;
+
   const needsVerification =
     signUp?.status === "missing_requirements" &&
     signUp.unverifiedFields?.includes("email_address") &&
@@ -27,10 +31,7 @@ export default function SignUpPage() {
     setTopError("");
 
     const { error } = await signUp.password({ emailAddress: email, password });
-    if (error) {
-      setTopError(error.longMessage ?? error.message ?? "注册失败，请重试");
-      return;
-    }
+    if (error) return;
 
     await signUp.verifications.sendEmailCode();
   };
@@ -41,10 +42,7 @@ export default function SignUpPage() {
     setTopError("");
 
     const { error } = await signUp.verifications.verifyEmailCode({ code });
-    if (error) {
-      setTopError(error.longMessage ?? error.message ?? "验证码错误，请重试");
-      return;
-    }
+    if (error) return;
 
     if (signUp.status === "complete") {
       await signUp.finalize({
@@ -118,7 +116,7 @@ export default function SignUpPage() {
               )}
             </div>
 
-            {topError && <p className="text-xs text-lark-danger">{topError}</p>}
+            {formError && <p className="text-xs text-lark-danger">{formError}</p>}
 
             <button
               type="submit"
@@ -155,7 +153,7 @@ export default function SignUpPage() {
               )}
             </div>
 
-            {topError && <p className="text-xs text-lark-danger">{topError}</p>}
+            {formError && <p className="text-xs text-lark-danger">{formError}</p>}
 
             <button
               type="submit"
