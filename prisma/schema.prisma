@@ -31,8 +31,8 @@ model Meeting {
   transcript        String
   summary           String
   processing_status String   @default("pending") // pending / processing / done / failed
-  document_diff     String?                        // 加密 JSON; 由后台异步任务写入
-  diff_status       String?                        // null / pending / confirmed / dismissed
+  document_diff     String? // 加密 JSON; 由后台异步任务写入
+  diff_status       String? // null / pending / confirmed / dismissed
   project           Project? @relation(fields: [project_id], references: [id])
   chunks            Chunk[]
 
@@ -82,12 +82,51 @@ model ProcessingLog {
 model Notification {
   id         String   @id @default(uuid())
   user_id    String
-  type       String   // diff_pending | (后续可扩展)
+  type       String // diff_pending | (后续可扩展)
   title      String
   body       String
-  link       String   // 例: /projects/{pid}/meetings/{mid}
+  link       String // 例: /projects/{pid}/meetings/{mid}
   read       Boolean  @default(false)
   created_at DateTime @default(now())
 
   @@index([user_id, created_at])
+}
+
+// ── 后台任务队列 ──────────────────────────────────────────────────────────────
+// 现有后台任务全是裸 IIFE + .catch()，进程重启就静默丢失。dreaming 是每晚无人
+// 值守跑的，没有这张表根本不知道它昨晚死没死。
+// 抢占用 SELECT ... FOR UPDATE SKIP LOCKED，PM2 cluster 多 worker 不会重复执行。
+model Job {
+  id           String    @id @default(uuid())
+  user_id      String
+  project_id   String?
+  type         String // transcribe / summarize / reindex / dreaming
+  payload      String    @default("") // 加密 JSON
+  status       String    @default("queued") // queued / running / done / failed
+  attempts     Int       @default(0)
+  max_attempts Int       @default(3)
+  run_after    DateTime  @default(now()) // dreaming 用它做 0–30min 抖动，避免整点打满 DashScope
+  locked_at    DateTime? // 超时仍是 running 视为 worker 崩了，回收成 queued
+  locked_by    String? // worker 标识（PM2 instance id）
+  last_error   String?
+  tokens_used  Int? // dreaming 每晚花多少，得看得见
+  created_at   DateTime  @default(now())
+  updated_at   DateTime  @updatedAt
+
+  @@index([status, run_after])
+  @@index([project_id, type])
+  @@index([user_id])
+}
+
+// ── 用户设置 ─────────────────────────────────────────────────────────────────
+// 此前没有任何 User 表（用户信息全在 Clerk，本地只有 user_id 字符串），
+// dreaming 的"当地时间凌晨 1 点"无处可存。
+// lang 原先只存在 lang_pref cookie 里：换设备就丢，且服务端后台任务读不到，一并挪进来。
+model UserSettings {
+  user_id          String   @id
+  timezone         String   @default("Asia/Shanghai") // IANA 名，不存 UTC 偏移（夏令时会错）
+  lang             String   @default("zh")
+  dreaming_enabled Boolean  @default(true)
+  created_at       DateTime @default(now())
+  updated_at       DateTime @updatedAt
 }
