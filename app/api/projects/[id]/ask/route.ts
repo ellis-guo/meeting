@@ -16,6 +16,14 @@ type QueryAnalysis = {
   intent: "project" | "speaker" | "date" | "meeting" | "audit" | "general";
   speakers: string[];
   date_filter: string | null;
+  /**
+   * 日期在问题里扮演什么角色。eq=某一天 / gte=之后 / lte=之前 / none=只是问题内容不作筛选。
+   *
+   * none 是关键：「Ellis 感冒发生在 3.20 之前吗」这类问题，正确答案恰恰落在该日期之外
+   * （实际是 4.3）。若按 meeting_date = '2026-03-20' 过滤，答案结构性地检索不到，
+   * 系统只能答"不知道"或者编——而且这个错误是间歇性的，很难归因。
+   */
+  date_op: "eq" | "gte" | "lte" | "none";
   meeting_count: number;
 };
 
@@ -24,6 +32,7 @@ const ANALYZE_FALLBACK: QueryAnalysis = {
   intent: "general",
   speakers: [],
   date_filter: null,
+  date_op: "eq",
   meeting_count: 1,
 };
 
@@ -58,11 +67,15 @@ async function analyzeQuery(
       : [];
     const date_filter =
       typeof parsed.date_filter === "string" ? parsed.date_filter : null;
+    // 模型给了未知值就退回 eq（保持原有行为），不要静默变成 none 把过滤整个关掉
+    const date_op = (["eq", "gte", "lte", "none"] as const).find(
+      (o) => o === parsed.date_op,
+    ) ?? "eq";
     const meeting_count =
       typeof parsed.meeting_count === "number" && parsed.meeting_count >= 1
         ? Math.min(Math.round(parsed.meeting_count), 5)
         : 1;
-    return { result: { queries, intent, speakers, date_filter, meeting_count }, usage };
+    return { result: { queries, intent, speakers, date_filter, date_op, meeting_count }, usage };
   } catch {
     return { result: ANALYZE_FALLBACK, usage: null };
   }
@@ -229,6 +242,20 @@ export async function POST(
     return NextResponse.json({ error: String(e) }, { status: 502 });
   }
 
+  // 日期角色。date_op=none 表示日期只是问题内容而非筛选范围，此时一律不加日期条件。
+  const explicitDate =
+    analysis.date_filter && /^\d{4}-\d{2}-\d{2}$/.test(analysis.date_filter)
+      ? analysis.date_filter
+      : null;
+  const dateActive = explicitDate !== null && analysis.date_op !== "none";
+  // meeting_date 是 YYYY-MM-DD 字符串列，字典序比较等价于日期比较
+  const dateWhereExplicit =
+    analysis.date_op === "gte"
+      ? Prisma.sql`meeting_date >= ${explicitDate}`
+      : analysis.date_op === "lte"
+        ? Prisma.sql`meeting_date <= ${explicitDate}`
+        : Prisma.sql`meeting_date = ${explicitDate}`;
+
   // Phase 2: embed rewrite variants + resolve date + date meeting count — parallel
   const tPhase2 = Date.now();
   let embedVariantsUsage: DashScopeUsage | null = null;
@@ -244,12 +271,7 @@ export async function POST(
         ? prisma.$queryRaw<[{ d: string | null }]>`
           SELECT MAX(meeting_date) as d FROM "Chunk" WHERE project_id = ${projectId}
         `.then((r) => r[0]?.d ?? null)
-        : Promise.resolve(
-            analysis.date_filter &&
-              /^\d{4}-\d{2}-\d{2}$/.test(analysis.date_filter)
-              ? analysis.date_filter
-              : null,
-          ),
+        : Promise.resolve(dateActive ? explicitDate : null),
       // Multi-date: top-N distinct meeting_dates for "最近N次"
       analysis.date_filter === "latest" && analysis.meeting_count > 1
         ? prisma.$queryRaw<Array<{ d: string }>>`
@@ -259,16 +281,22 @@ export async function POST(
           LIMIT ${analysis.meeting_count}
         `.then((r) => (r.length > 0 ? r.map((row) => row.d) : null))
         : Promise.resolve(null as string[] | null),
-      analysis.intent === "date" &&
-      analysis.date_filter &&
-      /^\d{4}-\d{2}-\d{2}$/.test(analysis.date_filter)
+      analysis.intent === "date" && dateActive
         ? prisma.$queryRaw<[{ cnt: bigint }]>`
           SELECT COUNT(DISTINCT meeting_id)::int AS cnt FROM "Chunk"
-          WHERE project_id = ${projectId} AND meeting_date = ${analysis.date_filter}
+          WHERE project_id = ${projectId} AND ${dateWhereExplicit}
         `.then((r) => Number(r[0]?.cnt ?? 1))
         : Promise.resolve(1),
     ]);
   const embedVariantsMs = Date.now() - tPhase2;
+
+  // resolvedDate 可能来自 "latest" 的 DB 查询（那种情况就是某一天，按 eq）
+  const dateWhereResolved =
+    dateActive && analysis.date_op === "gte"
+      ? Prisma.sql`meeting_date >= ${resolvedDate}`
+      : dateActive && analysis.date_op === "lte"
+        ? Prisma.sql`meeting_date <= ${resolvedDate}`
+        : Prisma.sql`meeting_date = ${resolvedDate}`;
 
   const allVecs = [queryVec, ...variantVecs];
   const allVecStrs = allVecs.map((v) => `[${v.join(",")}]`);
@@ -385,7 +413,7 @@ export async function POST(
           FROM "Chunk"
           WHERE project_id = ${projectId}
             AND chunk_type = 'summary'
-            AND meeting_date = ${resolvedDate}
+            AND ${dateWhereResolved}
             AND embedding IS NOT NULL
           ORDER BY embedding <=> ${vecStr}::vector
           LIMIT ${summaryLimitPerVec}
@@ -401,7 +429,7 @@ export async function POST(
           FROM "Chunk"
           WHERE project_id = ${projectId}
             AND chunk_type = 'transcript'
-            AND meeting_date = ${resolvedDate}
+            AND ${dateWhereResolved}
             AND embedding IS NOT NULL
           ORDER BY embedding <=> ${vecStr}::vector
           LIMIT ${transcriptLimitPerVec}
@@ -785,6 +813,7 @@ export async function POST(
           effective_intent: effectiveIntent,
           speakers: validSpeakers,
           date_filter: analysis.date_filter,
+          date_op: analysis.date_op,
           resolved_date: resolvedDate,
           resolved_dates: resolvedDates,
           meeting_count: analysis.meeting_count,
