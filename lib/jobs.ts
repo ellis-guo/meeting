@@ -1,5 +1,6 @@
 import { hostname } from "node:os";
 import { prisma } from "@/lib/prisma";
+import { Prisma } from "@/app/generated/prisma/client";
 import { encryptJSON, decryptJSON } from "@/lib/crypto";
 
 // 后台任务队列。
@@ -89,8 +90,16 @@ export async function enqueue(input: {
  * FOR UPDATE SKIP LOCKED：多个 worker 同时抢时，拿不到行锁的直接跳过这一行去
  * 看下一行，而不是排队等待。这是多 worker 抢任务的标准解法，也是这里必须写
  * 原生 SQL 的唯一原因（Prisma 没有对应 API）。
+ *
+ * types 限定只抢哪几类任务。**传空数组表示什么都不抢**——本进程没有注册任何
+ * 处理函数时，抢到手只会白白烧掉一次 attempts 然后失败。不传 = 不限类型。
  */
-export async function claimNext(worker: string = workerId()): Promise<ClaimedJob | null> {
+export async function claimNext(
+  worker: string = workerId(),
+  types?: JobType[],
+): Promise<ClaimedJob | null> {
+  if (types && types.length === 0) return null;
+  const typeFilter = types ? Prisma.sql`AND type IN (${Prisma.join(types)})` : Prisma.empty;
   const now = new Date();
   const rows = await prisma.$queryRaw<RawClaim[]>`
     UPDATE "Job" SET
@@ -101,7 +110,7 @@ export async function claimNext(worker: string = workerId()): Promise<ClaimedJob
       updated_at = ${now}
     WHERE id = (
       SELECT id FROM "Job"
-      WHERE status = 'queued' AND run_after <= ${now}
+      WHERE status = 'queued' AND run_after <= ${now} ${typeFilter}
       ORDER BY run_after ASC, created_at ASC
       FOR UPDATE SKIP LOCKED
       LIMIT 1

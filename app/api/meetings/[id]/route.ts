@@ -5,6 +5,7 @@ import { decrypt, encryptJSON, decryptJSON } from "@/lib/crypto";
 import { getDashScopeKey } from "@/lib/apiKey.server";
 import { reindexSummaryChunks, type Summary } from "@/lib/chunking";
 import { numberedLineCount } from "@/lib/utils";
+import { markIndexDirty } from "@/lib/dreaming";
 import { deleteMeetingCascade } from "@/lib/cascade";
 
 export async function GET(
@@ -80,6 +81,11 @@ export async function PATCH(
     where: { id },
     data: { summary: encryptJSON(typed) },
   });
+
+  // 用户改了摘要 → 索引层过期。注意这里只标脏不重算：跨会议的实体归一、术语表、
+  // 时间轴矛盾都必须看到全量语料才能算，那是 dreaming 的活。本会议自己的
+  // embedding 则在下面立刻重建——只看单条的立即做，要看全局的留给夜里。
+  await markIndexDirty(meeting.project_id);
 
   // 摘要变了，检索索引也得跟着变。放后台跑（要调 embedding），失败记 ProcessingLog。
   const apiKey = (await getDashScopeKey()) ?? "";

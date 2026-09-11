@@ -12,6 +12,7 @@ import {
   buildSummaryChunks, buildTranscriptChunks, embedAndStore, buildAndStoreParents,
 } from "@/lib/chunking";
 import { checkRateLimit } from "@/lib/ratelimit";
+import { markIndexDirty } from "@/lib/dreaming";
 import { getLangRule } from "@/lib/lang";
 import { SSE_HEADERS, sseFrame as send } from "@/lib/sse";
 
@@ -215,6 +216,9 @@ export async function POST(req: NextRequest) {
             processing_status: "processing",
           },
         });
+
+        // 项目多了一场会议 → 索引层过期，等 dreaming 重算
+        await markIndexDirty(project_id);
 
         // Build & save chunks (synchronous so the user can rely on summary
         // sources immediately after `done`)

@@ -20,7 +20,15 @@ model Project {
   no_document     Boolean   @default(false)
   meetings        Meeting[]
 
+  // 索引层是否需要重算。任何写入（新会议、改摘要、删会议、换参考文件）置 true，
+  // dreaming 只处理为 true 的项目——否则每晚全量重算会变成一笔固定的 LLM 开销。
+  // 用布尔而不是比较 updated_at 时间戳：同一秒内的改动会算出相同的时间戳，
+  // 被判成"没变过"而永远不再重算（Charoite 踩过这个坑，它们最后改用微秒）。
+  index_dirty    Boolean   @default(false)
+  index_built_at DateTime?
+
   @@index([user_id])
+  @@index([index_dirty])
 }
 
 model Meeting {

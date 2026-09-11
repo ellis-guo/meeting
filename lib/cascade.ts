@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import type { Prisma } from "@/app/generated/prisma/client";
+import { markIndexDirty } from "@/lib/dreaming";
 
 // 级联删除。schema 里没有配 onDelete: Cascade，且 ChunkParent 根本没有外键关系，
 // 所以每个删除入口都必须手动按 chunks → parents → notifications → 主表 的顺序清。
@@ -44,5 +45,12 @@ export async function deleteProjectCascade(projectId: string, userId: string): P
 
 /** 删除单个会议及其衍生数据。 */
 export async function deleteMeetingCascade(meetingId: string, userId: string): Promise<void> {
+  // 先取 project_id：删完就查不到了
+  const meeting = await prisma.meeting.findUnique({
+    where: { id: meetingId },
+    select: { project_id: true },
+  });
   await prisma.$transaction(meetingCascadeOps([meetingId], userId));
+  // 少了一场会议同样让索引层过期——索引里还留着这次会议的实体和时间轴条目
+  await markIndexDirty(meeting?.project_id);
 }
