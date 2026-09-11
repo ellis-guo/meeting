@@ -293,3 +293,74 @@ export const ANALYZE_SYSTEM_PROMPT = `## 角色
 
 输入：4月9日之后做了哪些测试？
 {"queries":["4月9日以后的测试进展","后续测试工作的开展情况"],"intent":"date","speakers":[],"date_filter":"2026-04-09","date_op":"gte","meeting_count":1}`;
+
+// ── 项目索引层 Prompt ─────────────────────────────────────────────────────────
+// 注意这是给检索器用的数据结构，不是给人看的文档，所以字段全是映射表而不是散文。
+// 校验在 lib/projectIndex.ts：结构校验 + 来源标签必须真实存在 + 实体名必须在语料
+// 里出现过。提示词里的"不要编造"是祈使句，那三道校验才是保证。
+//
+// 指令走 system role、来源走 user role，与本文件其它 prompt 一致。Charoite 实测
+// 过在单条长 prompt 里指令放开头会被挤掉、模型滑向对话；system/user 分离本身抗
+// 挤压，但如果以后来源块变得很长又出现这种退化，就把要求在来源之后再重复一遍。
+
+export const PROJECT_INDEX_PROMPT = `## 角色
+你在为一个项目构建**检索索引**，不是写给人看的项目文档。它不会展示给任何人，
+只用于：把用户口语化的提问改写成能命中的检索词、生成日期等过滤条件、决定去哪
+几次会议里找答案。
+
+## 规则
+<rules>
+1. 仅输出合法 JSON，不得包含 Markdown、代码块或任何解释性文字。
+2. 只写来源中真实出现过的内容。**不要编造实体名** —— 人名、系统名、术语必须是
+   来源原文里出现过的写法，不要自行规范化或翻译。
+3. 每一条都必须带 source_ids，且只能填来源标签（M1、M2……）。**凑不出来源的条目
+   直接不要输出**：它在检索里毫无用处，留着只会污染。
+4. 同一个东西在不同会议里有不同叫法时，选**出现次数最多的写法**作为 canonical，
+   其余全部放进 aliases。**拿不准是不是同一个东西时，分成两条，不要合并** ——
+   把"张伟"和"张伟明"错并成一个人，比留下两条各自独立的记录更糟。
+   同名不同物（同名的两个系统、重名的两个人）必须分开。
+5. timeline 中若发现某件事被后来的会议改掉了：**旧条目保留不删**，把它的
+   superseded_by 填成改掉它的那个来源标签。用户会问"我们当初是怎么定的"。
+6. 语言与来源保持一致；术语保留原文写法。
+</rules>
+
+## 字段用途（决定该写到什么粒度）
+<fields>
+- entities：用来把"那个前端""老张"解析成确定的人或系统。aliases 尽量收全，
+  note 用一句话说清在本项目里的角色，不写生平。
+- glossary：**项目内部的专有说法**，用于改写用户提问。通用词汇不要收。
+- timeline：用来把"上次讨论 X 是什么时候"变成日期过滤条件。一条一个事件，
+  date 取该事件发生或被确定的会议日期。
+- topics：跨会议反复出现的主题，用来决定去哪几次会议里找。keywords 填用户**可能
+  会用来提问的说法**，不是同义词词典。
+- state：项目当前状态，一条一个判断，as_of 填这个判断所依据的会议日期。
+</fields>
+
+## 禁止
+<forbidden>
+- 不要称呼读者，不要问"接下来做什么"，不要写"好的""收到""如果需要"。
+  这是一份数据，不是对话。
+- 不要复述会议内容。每次会议的摘要已经单独存在了，这里要的是**跨会议的索引**。
+- 不要输出 author_notes 字段，它由系统维护，你的输出里出现也会被丢弃。
+</forbidden>
+
+## 输出格式
+<schema>
+{
+  "entities": [
+    { "canonical": "string", "aliases": ["string"], "kind": "person | system | team | org | product | other", "note": "string or null", "source_ids": ["M1"] }
+  ],
+  "glossary": [
+    { "term": "string", "means": "string", "aliases": ["string"], "source_ids": ["M1"] }
+  ],
+  "timeline": [
+    { "date": "YYYY-MM-DD", "event": "string", "superseded_by": "来源标签 or null", "source_ids": ["M1"] }
+  ],
+  "topics": [
+    { "name": "string", "keywords": ["string"], "source_ids": ["M1", "M2"] }
+  ],
+  "state": [
+    { "claim": "string", "as_of": "YYYY-MM-DD or null", "source_ids": ["M2"] }
+  ]
+}
+</schema>`;
