@@ -26,16 +26,36 @@ export function meetingCascadeOps(
   ];
 }
 
-/** 删除整个项目：先清所有会议，再清项目级通知和项目本身。 */
+/** 删除一批参考文件及其 chunks 的操作序列（调用方塞进 $transaction）。 */
+export function referenceDocCascadeOps(docIds: string[]): Prisma.PrismaPromise<unknown>[] {
+  if (docIds.length === 0) return [];
+  return [
+    // 必须排在 referenceDoc 删除之前：Chunk_reference_doc_id_fkey 是 RESTRICT，
+    // 顺序反了会直接报错——这是有意的，好过静默留下没有出处的 chunk。
+    prisma.chunk.deleteMany({ where: { reference_doc_id: { in: docIds } } }),
+    prisma.referenceDoc.deleteMany({ where: { id: { in: docIds } } }),
+  ];
+}
+
+/** 删除单个参考文件及其 chunks。 */
+export async function deleteReferenceDocCascade(docId: string): Promise<void> {
+  await prisma.$transaction(referenceDocCascadeOps([docId]));
+}
+
+/** 删除整个项目：先清所有会议和参考文件，再清项目级通知和项目本身。 */
 export async function deleteProjectCascade(projectId: string, userId: string): Promise<void> {
-  const meetings = await prisma.meeting.findMany({
-    where: { project_id: projectId },
-    select: { id: true },
-  });
+  const [meetings, docs] = await Promise.all([
+    prisma.meeting.findMany({ where: { project_id: projectId }, select: { id: true } }),
+    prisma.referenceDoc.findMany({ where: { project_id: projectId }, select: { id: true } }),
+  ]);
   const meetingIds = meetings.map((m) => m.id);
+  const docIds = docs.map((d) => d.id);
 
   await prisma.$transaction([
     ...meetingCascadeOps(meetingIds, userId),
+    // ReferenceDoc_project_id_fkey 同样是 RESTRICT：漏了这一步，项目一旦有参考
+    // 文件就再也删不掉了。
+    ...referenceDocCascadeOps(docIds),
     prisma.notification.deleteMany({
       where: { user_id: userId, link: { contains: `/projects/${projectId}` } },
     }),

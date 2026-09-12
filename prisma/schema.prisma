@@ -34,6 +34,8 @@ model Project {
   // 旧主文档目前仍在前端呈现，等模块 C 切换完再下线。
   index_json     String    @default("")
 
+  reference_docs ReferenceDoc[]
+
   @@index([user_id])
   @@index([index_dirty])
 }
@@ -70,10 +72,15 @@ model ChunkParent {
 }
 
 model Chunk {
-  id            String                       @id @default(uuid())
-  meeting_id    String
+  id String @id @default(uuid())
+
+  // chunk 的来源二选一：会议逐字稿/摘要，或参考文件。两者都为 null 的 chunk
+  // 没有出处，不该存在——但 Prisma 表达不了"恰好一个非空"，由写入路径保证。
+  meeting_id       String?
+  reference_doc_id String?
+
   project_id    String?
-  chunk_type    String
+  chunk_type    String // summary / transcript / reference
   content       String
   section_title String?
   speaker       String?
@@ -83,7 +90,52 @@ model Chunk {
   search_text   String?
   embedding     Unsupported("vector(1024)")?
   parent_id     String?
-  meeting       Meeting                      @relation(fields: [meeting_id], references: [id])
+
+  // onDelete 显式写 Restrict：meeting_id 改成可空后 Prisma 默认给 SetNull，
+  // 那会让"删会议时忘了先删 chunk"从大声失败变成静默产生没有出处的孤儿 chunk。
+  // 本项目的约定是每个删除入口手动按顺序清（见 lib/cascade.ts），Restrict 才是
+  // 配套的那一半——漏了就报错。
+  meeting       Meeting?      @relation(fields: [meeting_id], references: [id], onDelete: Restrict)
+  reference_doc ReferenceDoc? @relation(fields: [reference_doc_id], references: [id], onDelete: Restrict)
+
+  // 此前这张表除主键外一个索引都没有。project_id 是项目级检索的过滤条件、
+  // meeting_id 是每次重建索引的删除条件，都在走顺序扫描。
+  @@index([meeting_id])
+  @@index([reference_doc_id])
+  @@index([project_id, chunk_type])
+}
+
+/// 参考文件：与会议同级的语料来源。
+///
+/// 此前"其他文件"存在 Project.reference_files（≤10 条纯文本），只在建项目时喂给
+/// 主文档初稿，**不进 RAG 检索**。所以问"那份需求文档怎么说的"是检索不到的，
+/// 只能靠主文档里被转述过的二手内容。这张表把它升级成和会议同级的可检索语料。
+model ReferenceDoc {
+  id         String @id @default(uuid())
+  user_id    String
+  project_id String
+
+  /// 原始文件名。与 Project.name 一样不加密。
+  name        String
+  mime_type   String @default("")
+  size_bytes  Int    @default(0)
+  /// 对象存储的 key。解析完成后原件仍保留——转写稿/抽取文本是有损的。
+  storage_key String @default("")
+
+  /// 从文件里抽出来的纯文本（加密）。切块和检索都基于它。
+  content    String  @default("")
+  /// uploaded / parsing / ready / failed
+  status     String  @default("uploaded")
+  last_error String?
+
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+
+  project Project @relation(fields: [project_id], references: [id])
+  chunks  Chunk[]
+
+  @@index([project_id, status])
+  @@index([user_id])
 }
 
 model ProcessingLog {

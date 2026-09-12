@@ -36,6 +36,7 @@ function buildFallbackChunks(
     if (text) {
       chunks.push({
         meeting_id: meetingId,
+        reference_doc_id: null,
         project_id: projectId,
         chunk_type: "transcript",
         content: text,

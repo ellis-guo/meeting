@@ -19,7 +19,9 @@ export type Summary = {
 };
 
 export type ChunkInput = {
-  meeting_id: string;
+  // 来源二选一：会议，或参考文件。两个都为 null 的 chunk 没有出处，不该存在。
+  meeting_id: string | null;
+  reference_doc_id: string | null;
   project_id: string | null;
   chunk_type: string;
   content: string;
@@ -106,7 +108,7 @@ export function buildSummaryChunks(
         ], totalLines);
         droppedLines += dropped;
         chunks.push({
-          meeting_id: meetingId, project_id: projectId ?? null, chunk_type: "summary",
+          meeting_id: meetingId, reference_doc_id: null, project_id: projectId ?? null, chunk_type: "summary",
           content: plainText, search_text: plainText, section_title: section.title,
           speaker: null,
           line_start: lines.length ? Math.min(...lines) : null,
@@ -119,7 +121,7 @@ export function buildSummaryChunks(
       const { lines, dropped } = pickLines(sectionRawLines(section), totalLines);
       droppedLines += dropped;
       chunks.push({
-        meeting_id: meetingId, project_id: projectId ?? null, chunk_type: "summary",
+        meeting_id: meetingId, reference_doc_id: null, project_id: projectId ?? null, chunk_type: "summary",
         content: plainText, search_text: plainText, section_title: section.title,
         speaker: null,
         line_start: lines.length ? Math.min(...lines) : null,
@@ -164,7 +166,7 @@ export function buildTranscriptChunks(
   const chunks: ChunkInput[] = merged.map((turn) => {
     const plainText = `${turn.speaker}：${turn.text}`;
     return {
-      meeting_id: meetingId, project_id: projectId ?? null, chunk_type: "transcript",
+      meeting_id: meetingId, reference_doc_id: null, project_id: projectId ?? null, chunk_type: "transcript",
       content: plainText, search_text: plainText, section_title: null,
       speaker: turn.speaker, line_start: turn.lineStart, line_end: turn.lineEnd,
       meeting_date: meetingDate ?? null,
@@ -189,6 +191,7 @@ export async function insertChunks(
     data: withIds.map((c) => ({
       id: c.id,
       meeting_id: c.meeting_id,
+      reference_doc_id: c.reference_doc_id,
       project_id: c.project_id,
       chunk_type: c.chunk_type,
       content: c.content,
@@ -304,4 +307,58 @@ export async function buildAndStoreParents(
       });
     }
   }
+}
+
+/** 参考文件切块的目标长度。文档比口语密，可以比逐字稿的 200 长一些。 */
+const REFERENCE_CHUNK_CHARS = 500;
+
+/**
+ * 参考文件 → chunks。
+ *
+ * 和逐字稿不同，文档没有说话人轮次可依，按行累积到目标长度即切。line_start /
+ * line_end 仍然记着——这样参考文件也能溯源到原文的具体位置，而不是只能引"某份
+ * 文件"。行号基准与会议一致：过滤空行后从 1 开始（见 utils.numberedLines）。
+ */
+export function buildReferenceChunks(
+  text: string,
+  referenceDocId: string,
+  projectId: string | null,
+  docName: string,
+): ChunkInput[] {
+  const lines = numberedLines(text);
+  const chunks: ChunkInput[] = [];
+  let buffer: string[] = [];
+  let lineStart = 1;
+
+  const flush = (lineEnd: number) => {
+    const body = buffer.join("\n").trim();
+    buffer = [];
+    if (!body) { lineStart = lineEnd + 1; return; }
+    // 正文里带上文件名：检索命中时能立刻看出这段来自哪份文件，
+    // 也让"那份需求文档怎么说的"这类问法有东西可匹配。
+    const plainText = `${docName}\n${body}`;
+    chunks.push({
+      meeting_id: null,
+      reference_doc_id: referenceDocId,
+      project_id: projectId,
+      chunk_type: "reference",
+      content: plainText,
+      search_text: plainText,
+      section_title: docName,
+      speaker: null,
+      line_start: lineStart,
+      line_end: lineEnd,
+      // 参考文件没有会议日期。按日期过滤时它不该被排除掉——null 在
+      // meeting_date 过滤里本来就不参与匹配，这里保持 null 是有意的。
+      meeting_date: null,
+    });
+    lineStart = lineEnd + 1;
+  };
+
+  for (let i = 0; i < lines.length; i++) {
+    buffer.push(lines[i]);
+    if (buffer.join("").length >= REFERENCE_CHUNK_CHARS) flush(i + 1);
+  }
+  flush(lines.length);
+  return chunks;
 }
