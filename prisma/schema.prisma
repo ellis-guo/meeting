@@ -25,7 +25,14 @@ model Project {
   // 用布尔而不是比较 updated_at 时间戳：同一秒内的改动会算出相同的时间戳，
   // 被判成"没变过"而永远不再重算（Charoite 踩过这个坑，它们最后改用微秒）。
   index_dirty    Boolean   @default(false)
+  // 最后一次被标脏的时刻。dreaming 开工前读一次、收工时拿它当守卫：重建期间若又
+  // 有新会议或编辑进来（index_dirty_at 变了），就不清 index_dirty，留给下一轮。
+  // 没有这道守卫，重建窗口内的那次改动会被永久漏掉，而且是静默的。
+  index_dirty_at DateTime?
   index_built_at DateTime?
+  // 索引层本体（加密 JSON，结构见 lib/projectIndex.ts）。与 document 并存：
+  // 旧主文档目前仍在前端呈现，等模块 C 切换完再下线。
+  index_json     String    @default("")
 
   @@index([user_id])
   @@index([index_dirty])

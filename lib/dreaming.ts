@@ -46,7 +46,7 @@ export async function markIndexDirty(projectId: string | null | undefined): Prom
     // updateMany 而非 update：项目可能刚被删掉，那时不该抛。
     await prisma.project.updateMany({
       where: { id: projectId },
-      data: { index_dirty: true },
+      data: { index_dirty: true, index_dirty_at: new Date() },
     });
   } catch (e) {
     await prisma.processingLog

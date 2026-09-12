@@ -4,6 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { reclaimStale } from "@/lib/jobs";
 import { drainOnce, startBackgroundDrain, registeredTypes } from "@/lib/jobRunner";
 import { scheduleDreaming } from "@/lib/dreaming";
+import { registerJobHandlers } from "@/lib/registerJobs";
 
 // 任务队列的心跳端点，由服务器 crontab 每小时打一次：
 //
@@ -56,6 +57,7 @@ async function queueStats() {
 export async function GET(req: NextRequest) {
   const denied = guard(req);
   if (denied) return denied;
+  registerJobHandlers();
 
   const [stats, failed, dirty] = await Promise.all([
     queueStats(),
@@ -82,6 +84,9 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   const denied = guard(req);
   if (denied) return denied;
+
+  // 必须在 drain 之前：没注册的类型不会被抢走，漏调的后果是任务原地不动
+  registerJobHandlers();
 
   // ?wait=1 时同步跑完再返回，手动触发和测试用；cron 不该用，会把连接挂住
   const wait = new URL(req.url).searchParams.get("wait") === "1";
