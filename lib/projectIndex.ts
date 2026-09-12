@@ -260,3 +260,52 @@ export function groundIndex(
 export function preserveAuthorNotes(rebuilt: ProjectIndex, previous: ProjectIndex | null): ProjectIndex {
   return { ...rebuilt, author_notes: (previous?.author_notes ?? "").trim() };
 }
+
+/** 索引摘要的字符预算。查询分析每问一次就跑一次，不能把它撑大。 */
+export const DIGEST_CHARS = 1800;
+
+/**
+ * 把索引层压成一段紧凑文本，供查询分析使用。
+ *
+ * 这是索引层**唯一的对外出口**：它只进查询分析，不进生成上下文。所以它影响的是
+ * "去哪儿找"，而答案的引用始终落在具体会议的 chunk 上——索引层自己永远不会被
+ * 引用。这正是"不被溯源 ⇔ 不需要确认"那条设计约束的落点。
+ *
+ * 超预算时**整行整行地丢**，不切半行：半行"人物与系统：王磊(小王"会让模型读到
+ * 残缺的对照关系，比没有更糟。按 entities → glossary → timeline → topics 的
+ * 顺序保留，因为解析口语指代的收益最大。
+ */
+export function renderIndexDigest(index: ProjectIndex): string {
+  const byUsage = <T extends { source_ids: string[] }>(a: T, b: T) => b.source_ids.length - a.source_ids.length;
+  const candidates: string[] = [];
+
+  // note 必须带上。实测教训：只给"名字(别名)"时，问"那个负责安全的人"模型没有任何
+  // 依据判断是谁，于是猜了一个——并且带着一个自信的 speakers 过滤器进检索，把正确
+  // 答案结构性地滤掉了。没有职责信息时它至少会留空，那反而是对的。
+  const people = [...index.entities].sort(byUsage).map((e) => {
+    const alias = e.aliases.length ? `(${e.aliases.join("、")})` : "";
+    const note = e.note ? `：${e.note.slice(0, 40)}` : "";
+    return `${e.canonical}${alias}${note}`;
+  });
+  if (people.length) candidates.push("人物与系统：" + people.join("；"));
+
+  const terms = [...index.glossary].sort(byUsage)
+    .map((g) => (g.aliases.length ? `${g.term}(${g.aliases.join("、")})` : g.term));
+  if (terms.length) candidates.push("项目术语：" + terms.join(" · "));
+
+  const timeline = [...index.timeline].sort((a, b) => a.date.localeCompare(b.date))
+    .map((t) => `${t.date} ${t.event.slice(0, 30)}${t.superseded_by ? "[已被后续会议取代]" : ""}`);
+  if (timeline.length) candidates.push("时间轴：" + timeline.join(" | "));
+
+  const topics = index.topics.map((t) => t.name);
+  if (topics.length) candidates.push("主题：" + topics.join(" · "));
+
+  const lines: string[] = [];
+  let total = 0;
+  for (const line of candidates) {
+    if (total + line.length > DIGEST_CHARS) continue;
+    lines.push(line);
+    total += line.length + 1;
+  }
+  return lines.join("\n");
+}

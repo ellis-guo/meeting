@@ -10,6 +10,7 @@ import { ASK_SYSTEM_PROMPT, ANALYZE_SYSTEM_PROMPT } from "@/lib/prompts";
 import { Prisma } from "@/app/generated/prisma/client";
 import { checkRateLimit } from "@/lib/ratelimit";
 import { SOURCES_SEP, SSE_HEADERS, sseFrame as send } from "@/lib/sse";
+import { renderIndexDigest, type ProjectIndex } from "@/lib/projectIndex";
 
 type QueryAnalysis = {
   queries: string[];
@@ -40,11 +41,20 @@ async function analyzeQuery(
   question: string,
   apiKey: string,
   today: string,
+  /**
+   * 项目索引摘要，见 lib/projectIndex.renderIndexDigest。空串 = 该项目还没建过
+   * 索引（dreaming 没跑过或语料为空），此时行为与接入之前完全一致。
+   */
+  indexDigest: string,
 ): Promise<{ result: QueryAnalysis; usage: DashScopeUsage | null }> {
   try {
+    // 索引在前、问题在后：问题是要动手处理的东西，放末尾模型的注意力最稳
+    const context = indexDigest
+      ? `<project_index>\n${indexDigest}\n</project_index>\n\n当前日期：${today}\n问题：${question}`
+      : `当前日期：${today}\n问题：${question}`;
     const { content: raw, usage } = await callDashScope(
       ANALYZE_SYSTEM_PROMPT,
-      `当前日期：${today}\n问题：${question}`,
+      context,
       apiKey,
       FAST_CHAT_MODEL,
     );
@@ -216,6 +226,17 @@ export async function POST(
   const tTotal = Date.now();
   const today = new Date().toISOString().slice(0, 10);
 
+  // 项目索引层：只进查询分析，不进生成上下文——所以它永远不会被当成引用来源。
+  // 解不开或还没建过就退化成空串，问答行为与接入之前一致。
+  let indexDigest = "";
+  if (project.index_json) {
+    try {
+      indexDigest = renderIndexDigest(decryptJSON<ProjectIndex>(project.index_json));
+    } catch {
+      indexDigest = "";
+    }
+  }
+
   // Phase 1: analyze query (rewrite + intent + entities) + embed original — parallel
   let queryVec: number[];
   let analysis: QueryAnalysis;
@@ -227,7 +248,7 @@ export async function POST(
     [[analysis, analyzeMs], [queryVec, embedOriginalMs]] = await Promise.all([
       (async () => {
         const t = Date.now();
-        const { result, usage } = await analyzeQuery(question, apiKey, today);
+        const { result, usage } = await analyzeQuery(question, apiKey, today, indexDigest);
         analyzeUsage = usage;
         return [result, Date.now() - t] as [QueryAnalysis, number];
       })(),
