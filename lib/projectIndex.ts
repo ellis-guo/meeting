@@ -36,7 +36,7 @@ export type IndexSource = {
   text: string;
 };
 
-export type EntityKind = "person" | "system" | "team" | "org" | "product" | "other";
+export type EntityKind = "person" | "system" | "team" | "org" | "product" | "project" | "document" | "other";
 
 export type IndexEntity = {
   canonical: string;
@@ -80,7 +80,7 @@ export function emptyIndex(): ProjectIndex {
 }
 
 const DATE_RE = /^[0-9]{4}-[0-9]{2}-[0-9]{2}$/;
-const ENTITY_KINDS = new Set<string>(["person", "system", "team", "org", "product", "other"]);
+const ENTITY_KINDS = new Set<string>(["person", "system", "team", "org", "product", "project", "document", "other"]);
 
 /**
  * 给会议编来源标签。
@@ -308,4 +308,95 @@ export function renderIndexDigest(index: ProjectIndex): string {
     total += line.length + 1;
   }
   return lines.join("\n");
+}
+
+export type SanitizeReport = {
+  /** 结构不对、被整条丢弃的条目数 */
+  dropped_malformed: number;
+  /** kind 取值不认识、被归到 other 的实体数 */
+  coerced_kinds: number;
+};
+
+/**
+ * 把模型输出清洗成可用的索引：**逐条丢弃坏条目，而不是整份拒收**。
+ *
+ * 起因是一次真实失败：模型给了 kind="project"（当时枚举里没有这个值），
+ * validateProjectIndex 拒收整份输出 → 任务重试三次、每次都撞同一个问题 →
+ * 那个项目从此永久没有索引。而 kind 这个字段 renderIndexDigest 压根不读。
+ * **一个不影响输出的小瑕疵，被放大成了永久失效。**
+ *
+ * 所以按"坏掉的东西会不会产生错误输出"分三档：
+ * - 顶层结构不可用（不是对象、几个数组字段都不在）→ 返回 null，整份作废
+ * - 单条结构不对（缺 canonical、日期格式错）→ 丢这一条，其余照用
+ * - 非承载字段取值意外（kind 不认识）→ 归到 other，条目保留
+ *
+ * 注意不要把这条推广到 source_ids：那个错了会让引用指向错误的会议，属于"会产生
+ * 错误输出"，必须丢。它由 groundIndex 负责。
+ */
+export function sanitizeIndex(value: unknown): { index: ProjectIndex; report: SanitizeReport } | null {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
+  const o = value as Record<string, unknown>;
+  const report: SanitizeReport = { dropped_malformed: 0, coerced_kinds: 0 };
+
+  const arr = (v: unknown): unknown[] => (Array.isArray(v) ? v : []);
+  // 五个数组字段一个都不在，说明模型根本没按 schema 来，整份作废
+  const present = ["entities", "glossary", "timeline", "topics", "state"].filter((f) => Array.isArray(o[f]));
+  if (present.length === 0) return null;
+
+  const strArr = (v: unknown): string[] =>
+    Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : [];
+  const nonEmpty = (v: unknown): v is string => typeof v === "string" && v.trim().length > 0;
+  const isDate = (v: unknown): v is string => typeof v === "string" && DATE_RE.test(v);
+  const drop = () => { report.dropped_malformed++; return []; };
+
+  const entities: IndexEntity[] = arr(o.entities).flatMap((raw) => {
+    const e = raw as Record<string, unknown>;
+    if (!e || !nonEmpty(e.canonical)) return drop();
+    let kind = e.kind as EntityKind;
+    if (typeof kind !== "string" || !ENTITY_KINDS.has(kind)) { kind = "other"; report.coerced_kinds++; }
+    return [{
+      canonical: e.canonical,
+      aliases: strArr(e.aliases),
+      kind,
+      note: typeof e.note === "string" ? e.note : null,
+      source_ids: strArr(e.source_ids),
+    }];
+  });
+
+  const glossary: IndexGlossaryItem[] = arr(o.glossary).flatMap((raw) => {
+    const g = raw as Record<string, unknown>;
+    if (!g || !nonEmpty(g.term)) return drop();
+    return [{
+      term: g.term,
+      means: typeof g.means === "string" ? g.means : "",
+      aliases: strArr(g.aliases),
+      source_ids: strArr(g.source_ids),
+    }];
+  });
+
+  const timeline: IndexTimelineItem[] = arr(o.timeline).flatMap((raw) => {
+    const t = raw as Record<string, unknown>;
+    // 日期格式错就没法当过滤条件用了，这一条留着也没意义
+    if (!t || !isDate(t.date) || !nonEmpty(t.event)) return drop();
+    return [{
+      date: t.date,
+      event: t.event,
+      superseded_by: typeof t.superseded_by === "string" ? t.superseded_by : null,
+      source_ids: strArr(t.source_ids),
+    }];
+  });
+
+  const topics: IndexTopic[] = arr(o.topics).flatMap((raw) => {
+    const t = raw as Record<string, unknown>;
+    if (!t || !nonEmpty(t.name)) return drop();
+    return [{ name: t.name, keywords: strArr(t.keywords), source_ids: strArr(t.source_ids) }];
+  });
+
+  const state: IndexStateItem[] = arr(o.state).flatMap((raw) => {
+    const s = raw as Record<string, unknown>;
+    if (!s || !nonEmpty(s.claim)) return drop();
+    return [{ claim: s.claim, as_of: isDate(s.as_of) ? s.as_of : null, source_ids: strArr(s.source_ids) }];
+  });
+
+  return { index: { entities, glossary, timeline, topics, state, author_notes: "" }, report };
 }

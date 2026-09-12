@@ -368,7 +368,7 @@ export const PROJECT_INDEX_PROMPT = `## 角色
 <schema>
 {
   "entities": [
-    { "canonical": "string", "aliases": ["string"], "kind": "person | system | team | org | product | other", "note": "string or null", "source_ids": ["M1"] }
+    { "canonical": "string", "aliases": ["string"], "kind": "person | system | team | org | product | project | document | other", "note": "string or null", "source_ids": ["M1"] }
   ],
   "glossary": [
     { "term": "string", "means": "string", "aliases": ["string"], "source_ids": ["M1"] }

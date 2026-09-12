@@ -11,7 +11,7 @@ import {
   groundIndex,
   preserveAuthorNotes,
   renderSources,
-  validateProjectIndex,
+  sanitizeIndex,
   type ProjectIndex,
 } from "@/lib/projectIndex";
 
@@ -151,16 +151,22 @@ export async function runDreaming(job: ClaimedJob): Promise<{ tokensUsed?: numbe
     DREAM_MODEL,
   );
 
-  // 下面两处失败都直接抛：交给队列按退避策略重试，三次都不成才进 failed。
-  // 在这里吞掉的话，坏索引会静默覆盖好索引。
+  // extractJSON 失败直接抛：交给队列按退避策略重试。在这里吞掉的话，坏索引会
+  // 静默覆盖好索引。
   const raw = extractJSON(content);
-  const schemaError = validateProjectIndex(raw);
-  if (schemaError) throw new Error(`索引结构校验不通过：${schemaError}`);
 
-  const { index: grounded, report } = groundIndex(raw as ProjectIndex, sources);
+  // 逐条清洗而不是整份校验。一次真实失败教的：模型给了 kind="project"（当时枚举
+  // 里没有），整份被拒 → 重试三次都撞同一个问题 → 那个项目永久没有索引，而 kind
+  // 这个字段 renderIndexDigest 根本不读。只有顶层结构彻底不可用才值得抛。
+  const sanitized = sanitizeIndex(raw);
+  if (!sanitized) throw new Error("模型输出不是可用的索引结构（五个数组字段一个都不在）");
+
+  const { index: grounded, report } = groundIndex(sanitized.index, sources);
   const cleared = await persist(projectId, preserveAuthorNotes(grounded, previous), dirtyAtAtStart);
 
-  await log(projectId, report.ungrounded_entities > 0 || report.dropped_entries > 0 ? "warn" : "info", {
+  const noisy = report.ungrounded_entities > 0 || report.dropped_entries > 0
+    || sanitized.report.dropped_malformed > 0 || sanitized.report.coerced_kinds > 0;
+  await log(projectId, noisy ? "warn" : "info", {
     type: "index_rebuilt",
     model: DREAM_MODEL,
     sources: sources.length,
@@ -172,6 +178,7 @@ export async function runDreaming(job: ClaimedJob): Promise<{ tokensUsed?: numbe
     topics: grounded.topics.length,
     state: grounded.state.length,
     ...report,
+    ...sanitized.report,
     // false = 重建期间这个项目又被改了，脏标记留着等下一轮
     dirty_cleared: cleared,
     tokens: usage?.total_tokens ?? null,
