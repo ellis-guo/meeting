@@ -11,6 +11,7 @@ import { Prisma } from "@/app/generated/prisma/client";
 import { checkRateLimit } from "@/lib/ratelimit";
 import { SOURCES_SEP, SSE_HEADERS, sseFrame as send } from "@/lib/sse";
 import { renderIndexDigest, type ProjectIndex } from "@/lib/projectIndex";
+import { REFERENCE_TITLE_SEP } from "@/lib/chunking";
 
 type QueryAnalysis = {
   queries: string[];
@@ -862,10 +863,13 @@ export async function POST(
           };
         }
         if (s.chunk_type === "reference") {
+          // section_title 的形态是 `文件名 › 章节标题`（见 buildSectionChunks），
+          // 取第一段换回文件名。没有标题的文档就只有文件名，split 后照样是它。
+          //
           // 名字对不上就留 null。模型偶尔会把文件名写走样（补个扩展名、改个
           // 标点），而一个指错文件的来源和指对的长得一模一样——宁可不可点击，
           // 也不要跳到另一份文档去（同 pickLines 对越界行号的处理）。
-          const name = s.section_title?.trim() ?? "";
+          const name = (s.section_title ?? "").split(REFERENCE_TITLE_SEP)[0].trim();
           return {
             meeting_id: null,
             reference_doc_id: refDocIndex.get(name) ?? null,

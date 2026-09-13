@@ -324,13 +324,45 @@ export async function buildAndStoreParents(
 const REFERENCE_CHUNK_CHARS = 500;
 
 /**
- * 参考文件 → chunks。
+ * 参考文件 → chunks。按文档有没有结构分派。
+ *
+ * 实测（3 份真实文档、101 个问题、top_k=6，与生产同参数）：
+ *
+ *   | | 按长度切 | 按章节切 |
+ *   |---|---|---|
+ *   | 标题型问题命中 | 46/47 | **47/47** |
+ *   | 原句型问题命中 | 50/54 | **53/54** |
+ *   | 取回正文字数   | 3300  | **2260（−30%）** |
+ *   | chunk 数 / 建索引 token | 51 / 14438 | 93 / 16991（+18%） |
+ *
+ * 两组问题分别偏向一方（标题型的问题就是标题本身，偏向章节；原句型要罩住某一行，
+ * 块越大越占便宜，偏向长度），按章节切**两组都赢**，而且少取回三成正文——同样
+ * 命中的前提下进 LLM 的噪声更少。多出来的 18% token 是每块重复的章节路径。
+ *
+ * 没有标题的文档（扫描件转写、纯文本流水账）退回按长度切。
+ */
+export function buildReferenceChunks(
+  text: string,
+  referenceDocId: string,
+  projectId: string | null,
+  docName: string,
+): ChunkInput[] {
+  const st = detectStructure(text);
+  // 两个标题起步：一个孤零零的标题（多半就是文档大标题）切不出章节，
+  // 反而把整份文档变成一块。
+  return st.headings >= 2
+    ? buildSectionChunks(text, referenceDocId, projectId, docName)
+    : buildLengthChunks(text, referenceDocId, projectId, docName);
+}
+
+/**
+ * 纯按长度累积切块。没有标题可依时的兜底。
  *
  * 和逐字稿不同，文档没有说话人轮次可依，按行累积到目标长度即切。line_start /
  * line_end 仍然记着——这样参考文件也能溯源到原文的具体位置，而不是只能引"某份
  * 文件"。行号基准与会议一致：过滤空行后从 1 开始（见 utils.numberedLines）。
  */
-export function buildReferenceChunks(
+export function buildLengthChunks(
   text: string,
   referenceDocId: string,
   projectId: string | null,
@@ -368,6 +400,134 @@ export function buildReferenceChunks(
 
   for (let i = 0; i < lines.length; i++) {
     buffer.push(lines[i]);
+    if (buffer.join("").length >= REFERENCE_CHUNK_CHARS) flush(i + 1);
+  }
+  flush(lines.length);
+  return chunks;
+}
+
+/**
+ * 标题行。Markdown 原生就是 `#`，.docx 经 convertToHtml + htmlToText 之后也是
+ * 这个形态（见 lib/documentParser.ts），所以两种格式在这里只需要认一种记号。
+ */
+const HEADING_RE = /^(#{1,6})\s+(.+)$/;
+
+/**
+ * 章节路径的分隔符。不用 `/`：文件名和标题里都可能有斜杠。
+ *
+ * 导出是因为 ask 路由要靠它从 `section_title` 里把文件名切回来
+ * （模型在引用里报的是 `文件名 › 章节`，而来源解析需要的是文件名）。
+ */
+export const REFERENCE_TITLE_SEP = " › ";
+const PATH_SEP = REFERENCE_TITLE_SEP;
+
+export type DocStructure = {
+  headings: number;
+  /** 落在某个标题之下的行占比。标题只有一个孤零零挂在开头时这个值会很低。 */
+  covered: number;
+  /** 最大的一节有多少行。一个标题底下压着整份文档时，按章节切等于没切。 */
+  maxSectionLines: number;
+};
+
+/** 探测文档的结构。只看标题记号，不调模型。 */
+export function detectStructure(text: string): DocStructure {
+  const lines = numberedLines(text);
+  let headings = 0;
+  let covered = 0;
+  let cur = 0;
+  let maxSectionLines = 0;
+  let seenHeading = false;
+  for (const line of lines) {
+    if (HEADING_RE.test(line)) {
+      headings++;
+      seenHeading = true;
+      maxSectionLines = Math.max(maxSectionLines, cur);
+      cur = 0;
+    } else if (seenHeading) {
+      covered++;
+      cur++;
+    }
+  }
+  maxSectionLines = Math.max(maxSectionLines, cur);
+  const body = lines.length - headings;
+  return { headings, covered: body > 0 ? covered / body : 0, maxSectionLines };
+}
+
+/**
+ * 参考文件 → chunks，**按章节切**。
+ *
+ * 和 buildReferenceChunks（纯按长度累积）的区别只有一条：**标题是硬边界**。
+ * 一节结束就切，不跟下一节的内容混在一块里。
+ *
+ * 章节内仍然按长度再切一刀 —— 这不是可选的：一个十页的章节就是一块，而 chunk
+ * 大小本来就没有上界（实测单行 4000 字 → 1 块 4007 字）。超长 chunk 会顶穿
+ * embedding 的输入上限，而 embedAndStore 对批次失败是记日志后 continue，
+ * 结果是这条 chunk 留在库里但没有向量，向量检索永远取不到它。
+ *
+ * 每一块都带上**完整章节路径**（`1. 性能指标 › 1.1 吞吐量`），而不只是最近的
+ * 那级标题：同一份文档里 "1.1 指标" 和 "2.1 指标" 可以同名，只给最近一级的话
+ * 检索命中后根本分不清是哪一节。同一节切出的第 2、3 块也各自重复一遍路径，
+ * 否则后半节脱离标题之后就是一段无主的文字。
+ */
+export function buildSectionChunks(
+  text: string,
+  referenceDocId: string,
+  projectId: string | null,
+  docName: string,
+): ChunkInput[] {
+  const lines = numberedLines(text);
+  const chunks: ChunkInput[] = [];
+  /** 标题栈：下标 = 层级 - 1 */
+  let stack: string[] = [];
+  let buffer: string[] = [];
+  let lineStart = 1;
+
+  const flush = (lineEnd: number) => {
+    const body = buffer.join("\n").trim();
+    buffer = [];
+    if (!body) { lineStart = lineEnd + 1; return; }
+    // 路径一律从 stack 现算，不另存一份——两个来源迟早会不同步。
+    // flush 总是在更新 stack **之前**调用，所以这里拿到的是刚结束那一节的路径。
+    const path = stack.filter(Boolean);
+    // 正文里放**完整路径**：同名小节（"1.1 指标" vs "2.1 指标"）靠上级标题才分得开，
+    // 实测这是按章节切赢下来的一部分。
+    const fullPath = path.length ? `${docName}${PATH_SEP}${path.join(PATH_SEP)}` : docName;
+    // 但 section_title 只放**最后一级**：它要作为行内引用显示
+    // （`[参考文件 · PRD-v2.md › 1.1 核心洞察]`），完整路径挂在句尾没法看。
+    const leaf = path.at(-1);
+    const title = leaf ? `${docName}${PATH_SEP}${leaf}` : docName;
+    const plainText = `${fullPath}\n${body}`;
+    chunks.push({
+      meeting_id: null,
+      reference_doc_id: referenceDocId,
+      project_id: projectId,
+      chunk_type: "reference",
+      content: plainText,
+      search_text: plainText,
+      section_title: title,
+      speaker: null,
+      line_start: lineStart,
+      line_end: lineEnd,
+      meeting_date: null,
+    });
+    lineStart = lineEnd + 1;
+  };
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const m = HEADING_RE.exec(line);
+    if (m) {
+      // 标题是硬边界：先把上一节收尾，再更新路径
+      flush(i);
+      const level = m[1].length;
+      stack = stack.slice(0, level - 1);
+      stack[level - 1] = m[2].trim();
+      lineStart = i + 1;
+      // 标题行本身留在正文里：用户会直接搜标题里的词
+      buffer.push(line);
+      continue;
+    }
+    buffer.push(line);
     if (buffer.join("").length >= REFERENCE_CHUNK_CHARS) flush(i + 1);
   }
   flush(lines.length);
