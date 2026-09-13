@@ -1,25 +1,26 @@
 import { Fragment } from "react";
 
-/** 把 `[2026-04-18 · 章节标题]` 这样的引用解析成会议链接，返回 null 表示无法定位。 */
-export type CitationResolver = (date: string, section: string) => string | null;
+/**
+ * 把 `[左 · 右]` 这样的引用解析成链接，返回 null 表示无法定位（渲染成灰色不可点）。
+ *
+ * 左边原本只可能是日期（`[2026-04-18 · 章节标题]`），加了参考文件之后还可能是
+ * "参考文件"（`[参考文件 · 文件名 › 章节]`）。这里不认识任何一种具体形态，
+ * 两段原样交给调用方——谁提供 resolve，谁知道自己的来源长什么样。
+ */
+export type CitationResolver = (head: string, section: string) => string | null;
 
 function renderInline(text: string, resolve?: CitationResolver): React.ReactNode {
-  const parts = text.split(/(\*\*[^*]+\*\*|\[\d{4}-\d{2}-\d{2}\s*·[^\]]+\]|\[[^\]]+·[^\]]+\])/g);
+  const parts = text.split(/(\*\*[^*]+\*\*|\[[^\]]+·[^\]]+\])/g);
   return parts.map((part, i) => {
     if (part.startsWith("**") && part.endsWith("**")) {
       return <strong key={i}>{part.slice(2, -2)}</strong>;
     }
-    if (resolve) {
-      const m = part.match(/^\[(\d{4}-\d{2}-\d{2})\s*·\s*([^\]]+)\]$/);
-      if (m) {
-        const href = resolve(m[1], m[2].trim());
-        return href
-          ? <a key={i} href={href} target="_blank" rel="noopener noreferrer" className="underline decoration-lark-border text-lark-3 hover:text-lark-blue transition-colors text-xs">{part}</a>
-          : <span key={i} className="text-lark-4 text-xs">{part}</span>;
-      }
-      if (/^\[[^\]]+·[^\]]+\]$/.test(part)) {
-        return <span key={i} className="text-lark-4 text-xs">{part}</span>;
-      }
+    const m = part.match(/^\[([^\]·]+)·([^\]]+)\]$/);
+    if (m) {
+      const href = resolve?.(m[1].trim(), m[2].trim()) ?? null;
+      return href
+        ? <a key={i} href={href} target="_blank" rel="noopener noreferrer" className="underline decoration-lark-border text-lark-3 hover:text-lark-blue transition-colors text-xs">{part}</a>
+        : <span key={i} className="text-lark-4 text-xs">{part}</span>;
     }
     return part;
   });

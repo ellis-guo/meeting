@@ -102,6 +102,10 @@ type ChunkRow = {
   search_text: string | null;
   parent_id: string | null;
   cosine_dist?: number;
+  // 只有参考文件那一路 SELECT 了。会议那边的溯源锚点走的是 meeting_id + 日期，
+  // 不需要行号；参考文件没有日期，行号是它唯一能落到原文哪一段的依据。
+  line_start?: number | null;
+  line_end?: number | null;
 };
 
 type ParentRow = {
@@ -392,6 +396,7 @@ export async function POST(
           (vecStr) =>
             prisma.$queryRaw<ChunkRow[]>`
           SELECT id, meeting_id, chunk_type, section_title, speaker, meeting_date, search_text, parent_id,
+                 line_start, line_end,
                  embedding <=> ${vecStr}::vector AS cosine_dist
           FROM "Chunk"
           WHERE project_id = ${projectId}
@@ -611,7 +616,7 @@ export async function POST(
         // 对应的上下文渲染，就会被当成会议片段喂给模型（见下面 referenceChunks
         // 的分流）。
         prisma.$queryRaw<ChunkRow[]>`
-        SELECT id, meeting_id, chunk_type, section_title, speaker, meeting_date, search_text, parent_id
+        SELECT id, meeting_id, chunk_type, section_title, speaker, meeting_date, search_text, parent_id, line_start, line_end
         FROM "Chunk"
         WHERE project_id = ${projectId}
           AND search_text IS NOT NULL
@@ -625,7 +630,7 @@ export async function POST(
       `,
         keywordPattern
           ? prisma.$queryRaw<ChunkRow[]>`
-            SELECT id, meeting_id, chunk_type, section_title, speaker, meeting_date, search_text, parent_id
+            SELECT id, meeting_id, chunk_type, section_title, speaker, meeting_date, search_text, parent_id, line_start, line_end
             FROM "Chunk"
             WHERE project_id = ${projectId}
               AND search_text IS NOT NULL
@@ -762,6 +767,27 @@ export async function POST(
     );
   }
 
+  /**
+   * 引用标题 → 这次实际取回的行区间。
+   *
+   * 模型报不出行号——它看到的只是 `[参考文件 · 文件名 › 章节]`。但服务端知道这个
+   * 标题对应的是哪几块 chunk，行号就在那上面。取并集：一节太长时会被切成几块，
+   * 它们共享同一个 section_title，用户点进去应该看到整节而不是其中一块。
+   *
+   * 没有这一步，引用只能跳到"这份文档"，跳不到"文档的哪一段"——那和会议引用
+   * 能落到具体行就差了一截。
+   */
+  const refLineIndex = new Map<string, { start: number; end: number }>();
+  for (const c of referenceChunks) {
+    const key = c.section_title?.trim();
+    if (!key || c.line_start == null || c.line_end == null) continue;
+    const cur = refLineIndex.get(key);
+    refLineIndex.set(key, {
+      start: Math.min(cur?.start ?? c.line_start, c.line_start),
+      end: Math.max(cur?.end ?? c.line_end, c.line_end),
+    });
+  }
+
   const userMessage = `${contextParts.join("\n\n===\n\n")}\n\n问题：${question}`;
 
   const body = new ReadableStream({
@@ -859,6 +885,8 @@ export async function POST(
             chunk_type: "project_document",
             section_title: s.section_title ?? null,
             speaker: null,
+            line_start: null,
+            line_end: null,
             meeting_date: null,
           };
         }
@@ -869,13 +897,19 @@ export async function POST(
           // 名字对不上就留 null。模型偶尔会把文件名写走样（补个扩展名、改个
           // 标点），而一个指错文件的来源和指对的长得一模一样——宁可不可点击，
           // 也不要跳到另一份文档去（同 pickLines 对越界行号的处理）。
-          const name = (s.section_title ?? "").split(REFERENCE_TITLE_SEP)[0].trim();
+          const title = (s.section_title ?? "").trim();
+          const name = title.split(REFERENCE_TITLE_SEP)[0].trim();
+          // 行区间只在标题**完全对得上**时才给。对不上说明模型把标题改写了，
+          // 这时给一个猜来的区间就会把用户送到文档里错误的位置——比不跳转更糟。
+          const range = refLineIndex.get(title) ?? null;
           return {
             meeting_id: null,
             reference_doc_id: refDocIndex.get(name) ?? null,
             chunk_type: "reference",
             section_title: s.section_title ?? null,
             speaker: null,
+            line_start: range?.start ?? null,
+            line_end: range?.end ?? null,
             // 参考文件没有日期。模型若硬填了一个，这里丢掉——留着会让前端拿它
             // 去匹配会议，匹到哪次算哪次。
             meeting_date: null,
@@ -890,6 +924,9 @@ export async function POST(
           chunk_type: s.chunk_type ?? "summary",
           section_title: s.section_title ?? null,
           speaker: s.speaker ?? null,
+          // 会议的溯源锚点是 meeting_id + 日期，行号由会议页自己从摘要里取
+          line_start: null,
+          line_end: null,
           meeting_date: s.meeting_date ?? null,
         };
       });
