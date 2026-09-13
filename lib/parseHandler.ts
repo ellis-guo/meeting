@@ -75,8 +75,9 @@ export async function runParseDocument(job: ClaimedJob): Promise<{ tokensUsed?: 
   let text: string;
   let kind: string;
   let truncated: boolean;
+  let warnings: string[];
   try {
-    ({ kind, text, truncated } = await extractDocumentText(data, doc.name, doc.mime_type));
+    ({ kind, text, truncated, warnings } = await extractDocumentText(data, doc.name, doc.mime_type));
   } catch (e) {
     if (e instanceof UnparseableDocument) {
       await markUnparseable(docId, e.message);
@@ -103,13 +104,21 @@ export async function runParseDocument(job: ClaimedJob): Promise<{ tokensUsed?: 
     data: { content: encrypt(text), status: "ready", last_error: null },
   });
 
-  await log(docId, truncated ? "warn" : "info", {
+  // 标题行数单独记：这是"这份文档结构清不清晰"最直接的量，后面决定按章节切还是
+  // 按长度切要看它，现在先攒数据。
+  const headings = text.split("\n").filter((l) => /^#{1,6}\s/.test(l)).length;
+
+  await log(docId, truncated || warnings.length > 0 ? "warn" : "info", {
     type: "reference_parsed",
     kind,
     chars: text.length,
     chunks: created.length,
+    headings,
     truncated,
     embed_tokens: tokens,
+    // mammoth 的 "Unrecognised paragraph style" 之类：说明文档用了自定义样式，
+    // 标题可能压根没被认出来
+    warnings: warnings.slice(0, 10),
   });
 
   // 索引层暂时不标脏：dreamHandler 现在只读会议摘要，参考文件进不了它的来源集，

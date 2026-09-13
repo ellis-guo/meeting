@@ -114,10 +114,33 @@ function charClass(ranges: Array<[number, number]>): RegExp {
 const INVISIBLE_RE = charClass(INVISIBLE_RANGES);
 const LINE_SEPARATOR_RE = charClass(LINE_SEPARATORS);
 
-/** 抽取结果的规范化。顺序有讲究：先 NFKC 统一码位，再补部首，最后收拾空白。 */
+/**
+ * 只对这些区段做兼容分解（NFKC），**不整串 NFKC**。
+ *
+ * 整串 NFKC 会顺手把中文的全角标点也改掉：`注意：` → `注意:`、`（周三）` →
+ * `(周三)`。检索上无所谓，但 `ReferenceDoc.content` 是要作为引用展示给用户的
+ * ——把人家文档里的标点改了，溯源看着就不是原文了。原件虽然留在磁盘上，
+ * 但引用浮窗读的是这份文本。
+ *
+ * 所以按区段挑：会造成"同一个字两种码位"的才归一，纯排版差异的标点不动。
+ * 全角字母数字要归一 —— 否则文档里写 `ＰＳＫ` 时搜 `PSK` 搜不到。
+ */
+const COMPAT_RANGES: Array<[number, number]> = [
+  [0x2f00, 0x2fdf], // 康熙部首 → 正常汉字
+  [0xf900, 0xfaff], // CJK 兼容汉字 → 统一汉字
+  [0x3000, 0x3000], // 表意空格 → 普通空格
+  [0xff10, 0xff19], // 全角数字
+  [0xff21, 0xff3a], // 全角大写字母
+  [0xff41, 0xff5a], // 全角小写字母
+];
+const COMPAT_RE = charClass(COMPAT_RANGES);
+
+/** 抽取结果的规范化。顺序有讲究：先统一码位，再补部首，最后收拾空白。 */
 export function normalizeExtractedText(raw: string): string {
   return raw
-    .normalize("NFKC")
+    // NFC 是规范等价，只合并"同一个字的分解写法"，不改任何字形语义
+    .normalize("NFC")
+    .replace(COMPAT_RE, (ch) => ch.normalize("NFKC"))
     .replace(RADICAL_RE, (ch) => RADICAL_FALLBACK[ch])
     // Word 和 Windows 下的 txt 是 CRLF
     .replace(/\r\n?/g, "\n")
@@ -138,12 +161,114 @@ async function extractPdf(data: Uint8Array): Promise<string> {
   return text;
 }
 
-async function extractDocx(data: Uint8Array): Promise<string> {
+const ENTITIES: Record<string, string> = {
+  "&amp;": "&", "&lt;": "<", "&gt;": ">", "&quot;": '"', "&#39;": "'", "&nbsp;": " ",
+};
+
+function unescapeHtml(s: string): string {
+  return s.replace(/&(?:amp|lt|gt|quot|#39|nbsp);/g, (m) => ENTITIES[m] ?? m);
+}
+
+/**
+ * mammoth 的 HTML → 带结构标记的纯文本。
+ *
+ * 只认 mammoth 自己会产出的那一小撮标签，**不是通用 HTML 解析器**——输入不是
+ * 用户给的 HTML，是我们上一步刚生成的，标签集封闭且规整，为此引一个解析库
+ * 不划算。
+ *
+ * 输出用 Markdown 记号：标题 `#`、列表 `-`、表格行 `a | b | c`。这样 .md 和
+ * .docx 走完这一步之后**形态一致**，后面按章节切块只需要认一种标记。
+ */
+export function htmlToText(html: string): string {
+  const lines: string[] = [];
+  let buf = "";
+  let prefix = "";
+  let cell: string | null = null; // 非 null = 正在表格单元格里
+  let row: string[] = [];
+
+  const flush = () => {
+    const text = unescapeHtml(buf).replace(/\s+/g, " ").trim();
+    if (text) lines.push(prefix + text);
+    buf = "";
+    prefix = "";
+  };
+
+  // 标签 或 标签之间的文本
+  const TOKEN = /<\/?([a-zA-Z][a-zA-Z0-9]*)[^>]*>|([^<]+)/g;
+  for (let m = TOKEN.exec(html); m; m = TOKEN.exec(html)) {
+    const [raw, tag, text] = m;
+    if (text !== undefined) {
+      if (cell !== null) cell += text;
+      else buf += text;
+      continue;
+    }
+    const name = tag.toLowerCase();
+    const closing = raw.startsWith("</");
+    const heading = /^h([1-6])$/.exec(name);
+
+    if (heading) {
+      flush();
+      if (!closing) prefix = "#".repeat(Number(heading[1])) + " ";
+      continue;
+    }
+    switch (name) {
+      case "td": case "th":
+        if (closing) { row.push(unescapeHtml(cell ?? "").replace(/\s+/g, " ").trim()); cell = null; }
+        else cell = "";
+        break;
+      case "tr":
+        // 空行（全是空单元格）不要，否则表格里的空位会变成一堆 " |  | "
+        if (closing) { if (row.some(Boolean)) lines.push(row.join(" | ")); row = []; }
+        break;
+      case "li":
+        if (closing) flush();
+        else { flush(); prefix = "- "; }
+        break;
+      case "p": case "div":
+        // 单元格里的 <p> 不换行——mammoth 每个单元格都包一层 <p>，
+        // 换行的话一行表格会散成三行，正好丢掉"它们是一行"这个信息
+        if (cell !== null) { if (closing) cell += " "; }
+        else flush();
+        break;
+      case "br":
+        if (cell !== null) cell += " "; else flush();
+        break;
+      case "table": case "ul": case "ol":
+        flush();
+        break;
+      // img 直接忽略：mammoth 默认把图片转成 base64 data URI，那是纯噪声。
+      // 下面 convertImage 已经不去读图片内容了，这里只是把标签吃掉。
+      default:
+        break;
+    }
+  }
+  flush();
+  return lines.join("\n");
+}
+
+async function extractDocx(data: Uint8Array): Promise<{ text: string; warnings: string[] }> {
   const mammoth = await import("mammoth");
-  // extractRawText 而不是 convertToHtml：进 RAG 的是纯文本，HTML 标签只会占
-  // chunk 长度并污染 embedding。样式信息对检索没有价值。
-  const { value } = await mammoth.extractRawText({ buffer: Buffer.from(data) });
-  return value;
+  // convertToHtml 而不是 extractRawText：Word 的标题样式是**文档里就有的事实**，
+  // extractRawText 会把它和正文一起拍成无差别的行，等于我们主动销毁了结构信息，
+  // 后面再花 LLM 的钱去猜它。表格同理——extractRawText 和 convertToMarkdown 都把
+  // 表格拍成一格一行，看不出哪些格子属于同一行；而需求文档里的报文格式表恰好是
+  // 最常被问到的内容。convertToMarkdown 另外还会把 "1." 转义成 "1\."。
+  const { value, messages } = await mammoth.convertToHtml(
+    { buffer: Buffer.from(data) },
+    {
+      // 不读图片内容。默认行为是把每张图 base64 塞进 HTML——一个带几十张截图的
+      // 文档会在内存里膨胀成原文件的十几倍，而这些字节对检索毫无用处。
+      // 不调 image.readAsBase64String()，图片内容根本不会被读进来。
+      // src 是必填，给空串——htmlToText 反正把 <img> 整个吃掉。
+      convertImage: mammoth.images.imgElement(() => Promise.resolve({ src: "" })),
+    },
+  );
+  return {
+    text: htmlToText(value),
+    // "Unrecognised paragraph style" 意味着这份文档用了自定义样式、标题可能没被
+    // 认出来。这是后面判断"结构够不够清晰"的直接依据，不能吞掉。
+    warnings: messages.filter((m) => m.type === "warning").map((m) => m.message),
+  };
 }
 
 /**
@@ -156,7 +281,7 @@ export async function extractDocumentText(
   data: Uint8Array,
   name: string,
   mimeType: string,
-): Promise<{ kind: DocKind; text: string; truncated: boolean }> {
+): Promise<{ kind: DocKind; text: string; truncated: boolean; warnings: string[] }> {
   if (data.byteLength === 0) throw new UnparseableDocument("文件是空的");
   if (data.byteLength > MAX_FILE_BYTES) {
     throw new UnparseableDocument(`文件超过 ${Math.floor(MAX_FILE_BYTES / 1024 / 1024)}MB 上限`);
@@ -175,9 +300,10 @@ export async function extractDocumentText(
   }
 
   let raw: string;
+  let warnings: string[] = [];
   try {
     if (kind === "pdf") raw = await extractPdf(data);
-    else if (kind === "docx") raw = await extractDocx(data);
+    else if (kind === "docx") ({ text: raw, warnings } = await extractDocx(data));
     else raw = new TextDecoder("utf-8").decode(data);
   } catch (e) {
     // 库抛出来的异常一律归为"这个文件解不了"：pdfjs 对损坏/加密文件、mammoth
@@ -195,5 +321,5 @@ export async function extractDocumentText(
   }
 
   const truncated = text.length > MAX_TEXT_CHARS;
-  return { kind, text: truncated ? text.slice(0, MAX_TEXT_CHARS) : text, truncated };
+  return { kind, text: truncated ? text.slice(0, MAX_TEXT_CHARS) : text, truncated, warnings };
 }
