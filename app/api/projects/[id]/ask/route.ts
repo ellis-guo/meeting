@@ -360,11 +360,48 @@ export async function POST(
   // Dynamic SQL LIMIT per vector (scales with candidateCap, must be after candidateCap)
   const summaryLimitPerVec = Math.max(4, Math.ceil(candidateCap / 2));
   const transcriptLimitPerVec = Math.max(8, candidateCap);
+  const referenceLimitPerVec = Math.max(4, Math.ceil(candidateCap / 2));
 
   let summaryResultsPerVec: ChunkRow[][] = [];
   let transcriptResultsPerVec: ChunkRow[][] = [];
   let bm25Hits: ChunkRow[] = [];
   let ilikeHits: ChunkRow[] = [];
+
+  /**
+   * 参考文件不跟着 intent 分支走。
+   *
+   * 下面每个分支的差别都在**日期和说话人的过滤方式**上——而参考文件两样都没有
+   * （`meeting_date` 和 `speaker` 恒为 null，见 buildReferenceChunks 的注释）。
+   * 所以它只有一个问题要回答：这次该不该检索它。
+   *
+   * `date` / `meeting` 两类问题是**钉在某次会议上**的（"4月9日那次说了什么"、
+   * "上次会议的结论"），参考文件没有日期，掺进去只能是噪声——而且更糟的是，
+   * 它会挤掉本来就按日期筛得很窄的候选。其余意图（project / speaker / audit /
+   * general）都该看参考文件：需求文档恰恰是"项目目标是什么""有没有遗漏"这类
+   * 问题的第一手依据。
+   */
+  const wantReference =
+    effectiveIntent !== "date" && effectiveIntent !== "meeting";
+
+  // 提前发出去，和下面分支里的查询并发跑——promise 是即时启动的，放在 if/else
+  // 之前不会串行化，也省得在六个分支里各加一遍。
+  const referencePromise: Promise<ChunkRow[][]> = wantReference
+    ? Promise.all(
+        allVecStrs.map(
+          (vecStr) =>
+            prisma.$queryRaw<ChunkRow[]>`
+          SELECT id, meeting_id, chunk_type, section_title, speaker, meeting_date, search_text, parent_id,
+                 embedding <=> ${vecStr}::vector AS cosine_dist
+          FROM "Chunk"
+          WHERE project_id = ${projectId}
+            AND chunk_type = 'reference'
+            AND embedding IS NOT NULL
+          ORDER BY embedding <=> ${vecStr}::vector
+          LIMIT ${referenceLimitPerVec}
+        `,
+        ),
+      )
+    : Promise.resolve([]);
 
   if (effectiveIntent === "project") {
     // Project doc (always in context) + summary chunks only
@@ -565,22 +602,17 @@ export async function POST(
         `,
           ),
         ),
-        // ⚠️ 这两条关键词检索原本不带 chunk_type 过滤——上面所有向量检索都写死了
-        // summary/transcript，只有它们是"什么都捞"。参考文件（chunk_type =
-        // 'reference'）进 Chunk 表之后，就只会从这两条漏进来：向量路径永远取不到，
-        // 关键词路径偶尔命中，行为是飘的。更糟的是下游——它 meeting_id 和 parent_id
-        // 都是 null，会掉进 noParentTranscript，被渲染成
-        // `[日期未知 · 片段]` 并归到「会议记录片段」标题下，等于告诉模型"这段需求
-        // 文档是某次会议说的"，模型据此产出的引用会指向一场根本没说过这话的会议。
-        //
-        // 所以在把参考文件正式接进检索（向量 + 关键词 + 独立的引用渲染）之前，
-        // 这里显式排除。宁可检索不到，也不要错误归因——和 04ae57e 修的
-        // date_op 是同一类判断。
+        // 这两条关键词检索不带 chunk_type 过滤，三类 chunk 都捞——这是有意的：
+        // BM25 和 ilike 走的是字面匹配，参考文件里的术语、字段名、编号恰恰是
+        // 向量检索最容易漏而字面最容易中的东西。
+        // ⚠️ 但也正因为它们什么都捞，**新增 chunk_type 时必须连这里一起想**：
+        // 上面所有向量检索都写死了类型，只有这两条是敞口。类型进了这里却没有
+        // 对应的上下文渲染，就会被当成会议片段喂给模型（见下面 referenceChunks
+        // 的分流）。
         prisma.$queryRaw<ChunkRow[]>`
         SELECT id, meeting_id, chunk_type, section_title, speaker, meeting_date, search_text, parent_id
         FROM "Chunk"
         WHERE project_id = ${projectId}
-          AND chunk_type <> 'reference'
           AND search_text IS NOT NULL
           AND to_tsvector('simple', coalesce(search_text, ''))
               @@ websearch_to_tsquery('simple', ${question})
@@ -595,7 +627,6 @@ export async function POST(
             SELECT id, meeting_id, chunk_type, section_title, speaker, meeting_date, search_text, parent_id
             FROM "Chunk"
             WHERE project_id = ${projectId}
-              AND chunk_type <> 'reference'
               AND search_text IS NOT NULL
               AND search_text ~* ${keywordPattern}
             LIMIT 5
@@ -604,11 +635,13 @@ export async function POST(
       ]);
   }
 
+  const referenceResultsPerVec = await referencePromise;
+
   const retrievalMs = Date.now() - tRetrieval;
 
   const vecDistMap = new Map<string, (number | null)[]>();
   const numVecs = allVecs.length;
-  for (const lists of [summaryResultsPerVec, transcriptResultsPerVec]) {
+  for (const lists of [summaryResultsPerVec, transcriptResultsPerVec, referenceResultsPerVec]) {
     for (let vi = 0; vi < lists.length; vi++) {
       for (const chunk of lists[vi]) {
         if (!vecDistMap.has(chunk.id)) {
@@ -622,6 +655,7 @@ export async function POST(
   const { chunks: rrfChunks, scores: rrfScores } = rrfMerge([
     ...summaryResultsPerVec,
     ...transcriptResultsPerVec,
+    ...referenceResultsPerVec,
     bm25Hits,
     ilikeHits,
   ]);
@@ -631,10 +665,16 @@ export async function POST(
   const parentHits = new Map<string, number>();
   const summaryChunks: ChunkRow[] = [];
   const noParentTranscript: ChunkRow[] = [];
+  const referenceChunks: ChunkRow[] = [];
 
   for (const chunk of merged) {
     if (chunk.chunk_type === "summary") {
       summaryChunks.push(chunk);
+    } else if (chunk.chunk_type === "reference") {
+      // 必须排在 parent_id 判断之前。参考文件的 parent_id 是 null，落到最后那个
+      // else 就会被当成"没有父块的逐字稿片段"，渲染成 `[日期未知 · 片段]` 并归进
+      // 「会议记录片段」——等于告诉模型这段需求文档是某次会议说的。
+      referenceChunks.push(chunk);
     } else if (chunk.parent_id) {
       parentHits.set(
         chunk.parent_id,
@@ -706,6 +746,21 @@ export async function POST(
     contextParts.push(`会议记录片段：\n${chunkTexts.join("\n\n---\n\n")}`);
   }
 
+  // 参考文件**单独成块**，绝不能混进上面那堆。
+  //
+  // 它们不是会议说的话，是项目上传的文档（需求、规范、纪要原件）。混在"会议记录
+  // 片段"里，模型会给它安上一个日期去引用——而它压根没有日期，引出来的那次会议
+  // 根本没说过这话。标题行也换成 `[参考文件 · 文件名]`，让模型有一个跟会议不同
+  // 的引用格式可用（见 ASK_SYSTEM_PROMPT 的规则 6）。
+  if (referenceChunks.length > 0) {
+    const refTexts = referenceChunks.map(
+      (c) => `[参考文件 · ${c.section_title ?? "未命名文件"}]\n${c.search_text ?? ""}`,
+    );
+    contextParts.push(
+      `参考文件片段（项目上传的文档，不是会议记录，没有日期）：\n${refTexts.join("\n\n---\n\n")}`,
+    );
+  }
+
   const userMessage = `${contextParts.join("\n\n===\n\n")}\n\n问题：${question}`;
 
   const body = new ReadableStream({
@@ -730,6 +785,13 @@ export async function POST(
           ORDER BY created_at DESC
           LIMIT 5
         `,
+        // 参考文件的 名字 → id。模型在 %%SOURCES%% 里只报得出文件名（它看到的
+        // 就是 `[参考文件 · 文件名]`），要落成可跳转的来源得在服务端换回 id
+        // ——和 meetingDateIndex 同一个套路。
+        prisma.referenceDoc.findMany({
+          where: { project_id: projectId },
+          select: { id: true, name: true },
+        }),
       ]);
 
       const tAnswer = Date.now();
@@ -752,13 +814,14 @@ export async function POST(
       }
       const answerMs = Date.now() - tAnswer;
 
-      const [totalChunksRes, embeddedChunksRes, meetingDateRows, embeddingLogs] =
+      const [totalChunksRes, embeddedChunksRes, meetingDateRows, embeddingLogs, refDocRows] =
         await statsPromise;
       const totalChunks = Number(totalChunksRes[0]?.count ?? 0);
       const embeddedChunks = Number(embeddedChunksRes[0]?.count ?? 0);
       const meetingDateIndex = new Map(
         meetingDateRows.map((r) => [r.meeting_date, r.meeting_id]),
       );
+      const refDocIndex = new Map(refDocRows.map((d) => [d.name, d.id]));
       const recentEmbedErrors = embeddingLogs.map((log) => {
         try {
           return decryptJSON<Record<string, unknown>>(log.context);
@@ -791,9 +854,26 @@ export async function POST(
         if (s.chunk_type === "project_document") {
           return {
             meeting_id: null,
+            reference_doc_id: null,
             chunk_type: "project_document",
             section_title: s.section_title ?? null,
             speaker: null,
+            meeting_date: null,
+          };
+        }
+        if (s.chunk_type === "reference") {
+          // 名字对不上就留 null。模型偶尔会把文件名写走样（补个扩展名、改个
+          // 标点），而一个指错文件的来源和指对的长得一模一样——宁可不可点击，
+          // 也不要跳到另一份文档去（同 pickLines 对越界行号的处理）。
+          const name = s.section_title?.trim() ?? "";
+          return {
+            meeting_id: null,
+            reference_doc_id: refDocIndex.get(name) ?? null,
+            chunk_type: "reference",
+            section_title: s.section_title ?? null,
+            speaker: null,
+            // 参考文件没有日期。模型若硬填了一个，这里丢掉——留着会让前端拿它
+            // 去匹配会议，匹到哪次算哪次。
             meeting_date: null,
           };
         }
@@ -802,6 +882,7 @@ export async function POST(
           : null;
         return {
           meeting_id: meetingId,
+          reference_doc_id: null,
           chunk_type: s.chunk_type ?? "summary",
           section_title: s.section_title ?? null,
           speaker: s.speaker ?? null,
@@ -809,7 +890,7 @@ export async function POST(
         };
       });
 
-      const citationCounts = { project_document: 0, summary: 0, transcript: 0 };
+      const citationCounts = { project_document: 0, summary: 0, transcript: 0, reference: 0 };
       for (const s of sources) {
         const t = s.chunk_type as keyof typeof citationCounts;
         if (t in citationCounts) citationCounts[t]++;
@@ -858,11 +939,15 @@ export async function POST(
         query_vectors_count: allVecs.length,
         summary_hits: summaryResultsPerVec.map((r) => r.length),
         transcript_hits: transcriptResultsPerVec.map((r) => r.length),
+        reference_hits: referenceResultsPerVec.map((r) => r.length),
+        // false = 这次问题被判成钉在某次会议上（date/meeting），没检索参考文件
+        reference_searched: wantReference,
         bm25_hits: bm25Hits.length,
         ilike_hits: ilikeHits.length,
         merged_count: merged.length,
         parent_chunks_used: parentRows.length,
         no_parent_fallback: noParentTranscript.length,
+        reference_chunks_used: referenceChunks.length,
         has_project_doc: !!projectDoc,
         has_checklist:
           effectiveIntent === "audit" &&

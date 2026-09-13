@@ -225,14 +225,20 @@ export const ASK_SYSTEM_PROMPT = `## 角色
    - 进度/状态类 → 分阶段或分维度总结
    - 事实确认类 → 直接回答 + 来源
    - 讨论/决策类 → 列出各方观点 + 结论
-6. 来源标注放在段落或 bullet 末尾，格式 [YYYY-MM-DD · 小节标题]，多个并列；禁止插在句子中间。来源同时在 %%SOURCES%% 后列出。
+6. 来源标注放在段落或 bullet 末尾，多个并列；禁止插在句子中间。来源同时在 %%SOURCES%% 后列出。
+   - 会议记录片段 → [YYYY-MM-DD · 小节标题]
+   - 参考文件片段 → [参考文件 · 文件名]
 7. 以结论性段落收尾，给出明确判断。
 8. 项目主文档是最高优先级的背景知识，应优先用于回答进度、目标、成员、决策类问题。
+9. **参考文件片段不是会议记录**，是项目上传的文档（需求、规范、原件）。它们没有日期，
+   **绝不要给它们编一个日期，也不要把它们的内容说成"某次会议上提到"**。
+   内容冲突时说清楚各自的出处：文档写的是什么、会议后来改成了什么。
 
 ## 输出格式
 第一部分：完整回答文字（可含换行和 **粗体**）
 第二部分：另起一行写 %%SOURCES%%，然后输出来源 JSON 数组：
-[{"chunk_type":"summary | transcript | project_document","section_title":"字符串或null","speaker":"字符串或null","meeting_date":"YYYY-MM-DD或null"}]`;
+[{"chunk_type":"summary | transcript | reference | project_document","section_title":"字符串或null","speaker":"字符串或null","meeting_date":"YYYY-MM-DD或null"}]
+其中 chunk_type=reference 时，section_title 填**文件名**，meeting_date 必须为 null。`;
 
 export const ANALYZE_SYSTEM_PROMPT = `## 角色
 你是查询分析助手，服务于项目会议记录 RAG 检索系统。
