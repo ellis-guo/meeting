@@ -9,8 +9,11 @@ import { SUMMARY_SMART_PROMPT, SUMMARY_PROGRESS_PROMPT, MEMORY_DIFF_PROMPT } fro
 import { validateDiff } from "@/lib/projectDocSchema";
 import {
   type Section, type Summary,
-  buildSummaryChunks, buildTranscriptChunks, embedAndStore, buildAndStoreParents,
+  buildSummaryChunks, buildTranscriptChunks, insertChunks,
 } from "@/lib/chunking";
+import { enqueue } from "@/lib/jobs";
+import { startBackgroundDrain } from "@/lib/jobRunner";
+import { registerJobHandlers } from "@/lib/registerJobs";
 import { checkRateLimit } from "@/lib/ratelimit";
 import { markIndexDirty } from "@/lib/dreaming";
 import { getLangRule } from "@/lib/lang";
@@ -243,8 +246,9 @@ export async function POST(req: NextRequest) {
         }
 
         const chunksToInsert = formatOk ? [...summaryChunkInputs, ...transcriptChunkInputs] : summaryChunkInputs;
-        const createdChunks = await Promise.all(chunksToInsert.map((c) => prisma.chunk.create({ data: { meeting_id: c.meeting_id, reference_doc_id: c.reference_doc_id, project_id: c.project_id, chunk_type: c.chunk_type, content: c.content, search_text: c.search_text, section_title: c.section_title, speaker: c.speaker, line_start: c.line_start, line_end: c.line_end, meeting_date: c.meeting_date } })));
-        const chunksWithIds = createdChunks.map((c, i) => ({ ...chunksToInsert[i], id: c.id }));
+        // insertChunks 走一次 createMany（id 在客户端生成）。原来是每条一个
+        // prisma.chunk.create，一场会议几百条就是几百个来回。
+        await insertChunks(chunksToInsert);
 
         // SSE done — diff is no longer in payload (will land asynchronously
         // into Meeting.document_diff and surface via Notification)
@@ -259,11 +263,26 @@ export async function POST(req: NextRequest) {
         controller.close();
 
         // ── Background tasks (don't depend on SSE connection) ────────────────
-        const transcriptWithIds = chunksWithIds.filter(c => c.chunk_type === "transcript");
-        embedAndStore(chunksWithIds, meeting.id, apiKey).catch(() => {});
-        if (formatOk && transcriptWithIds.length > 0) {
-          buildAndStoreParents(transcriptWithIds).catch(() => {});
-        }
+        //
+        // 向量化和父块构建走任务队列，不再是裸 fire-and-forget。
+        //
+        // 原来是 `embedAndStore(...).catch(() => {})`：SSE 一关、进程一重启，
+        // 这活就静默消失了，chunk 留在库里永远没有向量。而所有向量检索都带
+        // `embedding IS NOT NULL`——那不是"慢一点"，是**这场会议从此检索不到**，
+        // 界面上还完全看不出来。进了队列就有重试、有记录、崩了能被 reclaimStale
+        // 捡回来（见 lib/jobs.ts 开头）。
+        //
+        // 处理函数按"缺什么补什么"补向量，所以这里不用把 chunk 列表传过去，
+        // 重试也不会重复付费。
+        registerJobHandlers();
+        await enqueue({
+          userId,
+          projectId: project_id ?? null,
+          type: "reindex",
+          payload: { meetingId: meeting.id, mode: "initial" },
+        });
+        // 立刻在后台开跑，不等下一次 tick——tick 是每小时一次的兜底
+        startBackgroundDrain();
 
         if (project && !project.no_document) {
           // Project meetings: generate diff in background, retry once on

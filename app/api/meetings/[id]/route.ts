@@ -2,11 +2,12 @@ import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@clerk/nextjs/server";
 import { prisma } from "@/lib/prisma";
 import { decrypt, encryptJSON, decryptJSON } from "@/lib/crypto";
-import { getDashScopeKey } from "@/lib/apiKey.server";
-import { reindexSummaryChunks, type Summary } from "@/lib/chunking";
-import { numberedLineCount } from "@/lib/utils";
+import { type Summary } from "@/lib/chunking";
 import { markIndexDirty } from "@/lib/dreaming";
 import { deleteMeetingCascade } from "@/lib/cascade";
+import { enqueue } from "@/lib/jobs";
+import { startBackgroundDrain } from "@/lib/jobRunner";
+import { registerJobHandlers } from "@/lib/registerJobs";
 
 export async function GET(
   _req: NextRequest,
@@ -87,25 +88,21 @@ export async function PATCH(
   // embedding 则在下面立刻重建——只看单条的立即做，要看全局的留给夜里。
   await markIndexDirty(meeting.project_id);
 
-  // 摘要变了，检索索引也得跟着变。放后台跑（要调 embedding），失败记 ProcessingLog。
-  const apiKey = (await getDashScopeKey()) ?? "";
-  if (apiKey) {
-    // source_lines 的校验基准。解不开逐字稿就传 null：跳过越界校验，
-    // 总比把用户这次编辑之外、本来正确的锚点全清掉好。
-    let lineCount: number | null = null;
-    try { lineCount = numberedLineCount(decrypt(meeting.transcript)); } catch { /* 保持 null */ }
-    reindexSummaryChunks(id, meeting.project_id, typed, apiKey, lineCount).catch(async (e) => {
-      await prisma.processingLog
-        .create({
-          data: {
-            level: "error",
-            meeting_id: id,
-            context: encryptJSON({ type: "summary_reindex_failed", detail: String(e) }),
-          },
-        })
-        .catch(() => {});
-    });
-  }
+  // 摘要变了，检索索引也得跟着变。走任务队列，不再是裸 fire-and-forget——
+  // 原来那种写法进程一重启就静默消失，chunk 留在库里却没有向量，而所有向量
+  // 检索都带 `embedding IS NOT NULL`，结果是**用户改完的内容从此检索不到**，
+  // 界面上完全看不出来。
+  //
+  // 校验基准、解密、删旧建新全在处理函数里（lib/reindexHandler.ts），
+  // 这里只负责把事情记下来。
+  registerJobHandlers();
+  await enqueue({
+    userId,
+    projectId: meeting.project_id,
+    type: "reindex",
+    payload: { meetingId: id, mode: "summary" },
+  });
+  startBackgroundDrain();
 
   return NextResponse.json({ id, summary: typed });
 }

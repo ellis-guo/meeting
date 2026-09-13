@@ -123,7 +123,9 @@ export async function POST(
 
   const created = await insertChunks(chunkInputs);
   await embedAndStore(created, meetingId, apiKey);
-  buildAndStoreParents(created).catch(() => {});
+  // 不能 fire-and-forget：请求返回后进程若重启，父块就永远缺一块，
+  // 而检索命中子块时扩不出上下文，症状是"答得比以前碎"，没人能归因
+  await buildAndStoreParents(created);
 
   return NextResponse.json({ chunks_created: created.length });
 }
