@@ -1,5 +1,6 @@
 import { registerHandler } from "@/lib/jobRunner";
 import { runDreaming } from "@/lib/dreamHandler";
+import { runParseDocument } from "@/lib/parseHandler";
 
 // 处理函数的注册入口。
 //
@@ -15,4 +16,5 @@ export function registerJobHandlers(): void {
   if (done) return;
   done = true;
   registerHandler("dreaming", runDreaming);
+  registerHandler("parse_document", runParseDocument);
 }

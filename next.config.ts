@@ -33,11 +33,21 @@ const securityHeaders = [
 ];
 
 const nextConfig: NextConfig = {
-  // Exclude jieba-wasm from webpack bundling so Node.js resolves __dirname correctly
-  serverExternalPackages: ["jieba-wasm"],
+  // jieba-wasm 不打包，让 Node 能正确解析 __dirname；
+  // unpdf / mammoth 同理：它们内部有动态 require 和自带的二进制/字体资源，
+  // 被打包器改写路径后会在运行时找不到文件。
+  serverExternalPackages: ["jieba-wasm", "unpdf", "mammoth"],
   // Include jieba-wasm WASM binary in Vercel serverless function bundle
   outputFileTracingIncludes: {
     "/api/**": ["./node_modules/jieba-wasm/pkg/nodejs/*.wasm"],
+  },
+  experimental: {
+    // ⚠️ 本项目有 proxy.ts，Next 会把请求体缓冲进内存以便多次读取，**默认上限
+    // 10MB，超过不报错也不失败**——路由只拿到前 10MB，然后在解析阶段炸成一个
+    // 跟大小毫无关系的错误。参考文件上传是唯一会传大 body 的路径，所以显式配一个
+    // 比单文件上限（documentParser.MAX_FILE_BYTES = 10MB）宽裕的值，把 multipart
+    // 的分隔符和多文件一次传的余量算进去。
+    proxyClientMaxBodySize: "24mb",
   },
   async headers() {
     return [{ source: "/:path*", headers: securityHeaders }];

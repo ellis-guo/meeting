@@ -47,3 +47,6 @@ next-env.d.ts
 
 # Claude Code
 .claude/
+
+# 参考文件原件（本地磁盘存储，见 lib/fileStorage.ts）
+/storage/

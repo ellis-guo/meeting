@@ -18,6 +18,9 @@ const LIMITS: Record<string, number> = {
   "POST:/api/projects/reprocess": 5,
   "POST:/api/projects/reembed": 2,
   "POST:/api/meetings/rechunk": 5,
+  // 上传本身不调 LLM，但每份文件都会排一个解析任务，而解析要做几十次 embedding。
+  // 不登记的话 DEFAULT_LIMIT=30 意味着一分钟能排 30 份文件的解析。
+  "POST:/api/projects/reference-docs": 10,
 };
 const DEFAULT_LIMIT = 30;
 

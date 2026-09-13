@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import type { Prisma } from "@/app/generated/prisma/client";
 import { markIndexDirty } from "@/lib/dreaming";
+import { deleteReferenceFile } from "@/lib/fileStorage";
 
 // 级联删除。schema 里没有配 onDelete: Cascade，且 ChunkParent 根本没有外键关系，
 // 所以每个删除入口都必须手动按 chunks → parents → notifications → 主表 的顺序清。
@@ -37,16 +38,37 @@ export function referenceDocCascadeOps(docIds: string[]): Prisma.PrismaPromise<u
   ];
 }
 
-/** 删除单个参考文件及其 chunks。 */
+/**
+ * 删除磁盘上的原件。**必须在数据库事务提交之后调用**。
+ *
+ * 顺序不能反：文件先删、事务后回滚的话，行还在而原件没了——那是个无法自愈的
+ * 状态，用户看得见文件却下载不了、也重新解析不了。反过来（事务成功、删文件
+ * 失败）只是留下一个孤儿文件，占点磁盘，随时可以扫掉。
+ *
+ * 所以这里吞掉异常：文件删不掉不该让一个已经成功的删除操作报错。
+ */
+async function purgeFiles(keys: string[]): Promise<void> {
+  await Promise.all(keys.map((k) => deleteReferenceFile(k).catch(() => {})));
+}
+
+/** 删除单个参考文件及其 chunks，连同磁盘上的原件。 */
 export async function deleteReferenceDocCascade(docId: string): Promise<void> {
+  const doc = await prisma.referenceDoc.findUnique({
+    where: { id: docId },
+    select: { storage_key: true },
+  });
   await prisma.$transaction(referenceDocCascadeOps([docId]));
+  await purgeFiles(doc?.storage_key ? [doc.storage_key] : []);
 }
 
 /** 删除整个项目：先清所有会议和参考文件，再清项目级通知和项目本身。 */
 export async function deleteProjectCascade(projectId: string, userId: string): Promise<void> {
   const [meetings, docs] = await Promise.all([
     prisma.meeting.findMany({ where: { project_id: projectId }, select: { id: true } }),
-    prisma.referenceDoc.findMany({ where: { project_id: projectId }, select: { id: true } }),
+    prisma.referenceDoc.findMany({
+      where: { project_id: projectId },
+      select: { id: true, storage_key: true },
+    }),
   ]);
   const meetingIds = meetings.map((m) => m.id);
   const docIds = docs.map((d) => d.id);
@@ -61,6 +83,8 @@ export async function deleteProjectCascade(projectId: string, userId: string): P
     }),
     prisma.project.delete({ where: { id: projectId } }),
   ]);
+
+  await purgeFiles(docs.map((d) => d.storage_key).filter(Boolean));
 }
 
 /** 删除单个会议及其衍生数据。 */

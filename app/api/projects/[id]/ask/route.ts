@@ -565,10 +565,22 @@ export async function POST(
         `,
           ),
         ),
+        // ⚠️ 这两条关键词检索原本不带 chunk_type 过滤——上面所有向量检索都写死了
+        // summary/transcript，只有它们是"什么都捞"。参考文件（chunk_type =
+        // 'reference'）进 Chunk 表之后，就只会从这两条漏进来：向量路径永远取不到，
+        // 关键词路径偶尔命中，行为是飘的。更糟的是下游——它 meeting_id 和 parent_id
+        // 都是 null，会掉进 noParentTranscript，被渲染成
+        // `[日期未知 · 片段]` 并归到「会议记录片段」标题下，等于告诉模型"这段需求
+        // 文档是某次会议说的"，模型据此产出的引用会指向一场根本没说过这话的会议。
+        //
+        // 所以在把参考文件正式接进检索（向量 + 关键词 + 独立的引用渲染）之前，
+        // 这里显式排除。宁可检索不到，也不要错误归因——和 04ae57e 修的
+        // date_op 是同一类判断。
         prisma.$queryRaw<ChunkRow[]>`
         SELECT id, meeting_id, chunk_type, section_title, speaker, meeting_date, search_text, parent_id
         FROM "Chunk"
         WHERE project_id = ${projectId}
+          AND chunk_type <> 'reference'
           AND search_text IS NOT NULL
           AND to_tsvector('simple', coalesce(search_text, ''))
               @@ websearch_to_tsquery('simple', ${question})
@@ -583,6 +595,7 @@ export async function POST(
             SELECT id, meeting_id, chunk_type, section_title, speaker, meeting_date, search_text, parent_id
             FROM "Chunk"
             WHERE project_id = ${projectId}
+              AND chunk_type <> 'reference'
               AND search_text IS NOT NULL
               AND search_text ~* ${keywordPattern}
             LIMIT 5

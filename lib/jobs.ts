@@ -16,7 +16,7 @@ import { encryptJSON, decryptJSON } from "@/lib/crypto";
 // `run_after <= now()` 会整体偏 8 小时——凌晨 1 点的 dreaming 会在前一天下午
 // 被抢走。所有时间一律从 JS 传 Date 参数，与数据库时区无关。
 
-export type JobType = "transcribe" | "summarize" | "reindex" | "dreaming";
+export type JobType = "transcribe" | "summarize" | "reindex" | "dreaming" | "parse_document";
 export type JobStatus = "queued" | "running" | "done" | "failed";
 
 /**

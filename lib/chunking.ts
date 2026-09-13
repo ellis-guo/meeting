@@ -249,17 +249,27 @@ export async function reindexSummaryChunks(
   await embedAndStore(created, meetingId, apiKey);
 }
 
+/**
+ * 给 chunks 算向量并写回。
+ *
+ * meetingId 只用于 ProcessingLog 的归属，参考文件传 null（它不属于任何会议）。
+ * 返回累计 embedding token：后台任务要把它记进 Job.tokens_used，否则"昨晚花了
+ * 多少钱"这个问题只能靠猜。
+ */
 export async function embedAndStore(
   chunks: Array<ChunkInput & { id: string }>,
-  meetingId: string,
+  meetingId: string | null,
   apiKey: string,
-): Promise<void> {
+): Promise<{ tokens: number }> {
   const BATCH = 10;
+  let tokens = 0;
   for (let i = 0; i < chunks.length; i += BATCH) {
     const batch = chunks.slice(i, i + BATCH);
     let vectors: number[][];
     try {
-      vectors = (await fetchEmbeddings(batch.map((c) => c.content), apiKey)).embeddings;
+      const res = await fetchEmbeddings(batch.map((c) => c.content), apiKey);
+      vectors = res.embeddings;
+      tokens += res.usage?.total_tokens ?? 0;
     } catch (e) {
       await prisma.processingLog.create({
         data: { level: "error", meeting_id: meetingId, context: encryptJSON({ type: "embedding_batch_failed", batch_start: i, detail: String(e) }) },
@@ -277,6 +287,7 @@ export async function embedAndStore(
       }
     }
   }
+  return { tokens };
 }
 
 export async function buildAndStoreParents(
