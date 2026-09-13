@@ -9,6 +9,7 @@ import { Project } from "@/app/types";
 import AppHeader from "@/app/components/AppHeader";
 import ProjectAskPanel from "@/app/components/ProjectAskPanel";
 import ProjectMemoryPanel from "@/app/components/ProjectMemoryPanel";
+import ReferenceDocsPanel from "@/app/components/ReferenceDocsPanel";
 import { useConfirm } from "@/lib/ConfirmContext";
 
 type MeetingCardData = {
@@ -278,6 +279,8 @@ export default function ProjectDetailPage() {
             onUpdated={(updated) => setProject((p) => p ? { ...p, document: updated } : p)}
           />
         )}
+
+        <ReferenceDocsPanel projectId={id} />
 
         <ProjectAskPanel projectId={id} blocked={pendingMeetings.length > 0} blockedCount={pendingMeetings.length} />
 
