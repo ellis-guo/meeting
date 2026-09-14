@@ -2,116 +2,42 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { ProjectMemory } from "@/app/types";
 import AppHeader from "@/app/components/AppHeader";
-import ProjectMemoryPanel from "@/app/components/ProjectMemoryPanel";
-import { useApiKey } from "@/lib/ApiKeyContext";
+
+// 建项目只要一个名字。
+//
+// 原来这里还有：「不需要主文档」开关、一个粘贴参考文件的大文本框、以及创建后
+// 让用户确认 AI 生成的主文档初稿。三样都随主文档一起下线了（见 PRD 5.1/5.2）：
+// 建项目时不生成任何内容，文档统一走项目页的「参考文件」入口上传——那条路能
+// 存原件、能溯源到具体章节，而这里的文本框只是把内容塞进一份没人看的主文档。
+//
+// 不再需要 API key：这个页面已经不调模型了。
 
 export default function NewProjectPage() {
   const router = useRouter();
-  const { status: keyStatus, loading: keyLoading, promptApiKey } = useApiKey();
   const [name, setName] = useState("");
-  const [referenceText, setReferenceText] = useState("");
-  const [noDocument, setNoDocument] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const [projectId, setProjectId] = useState<string | null>(null);
-  const [draft, setDraft] = useState<ProjectMemory | null>(null);
-  const [saving, setSaving] = useState(false);
-
   const handleCreate = async () => {
-    if (!name.trim()) return;
-    if (keyLoading) return; // Key 状态还没查回来就弹窗，会误报“未配置”
-    if (!keyStatus.configured) { promptApiKey(); return; }
+    if (!name.trim() || loading) return;
     setLoading(true);
     setError(null);
     try {
-      const referenceFiles = referenceText.trim() ? [referenceText.trim()] : [];
       const res = await fetch("/api/projects", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: name.trim(), reference_files: referenceFiles, no_document: noDocument }),
+        body: JSON.stringify({ name: name.trim() }),
       });
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error ?? "创建失败");
-
-      if (data.document_draft) {
-        setProjectId(data.project_id);
-        setDraft(data.document_draft as ProjectMemory);
-      } else {
-        router.push(`/projects/${data.project_id}`);
-      }
+      router.push(`/projects/${data.project_id}`);
     } catch (e) {
       setError(String(e));
-    } finally {
       setLoading(false);
     }
   };
 
-  const handleConfirmDraft = async () => {
-    if (!projectId || !draft) return;
-    setSaving(true);
-    setError(null);
-    try {
-      const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
-      const cleanedDraft = {
-        ...draft,
-        key_decisions: (draft.key_decisions ?? []).filter(
-          (d) => d && (d.date === null || (typeof d.date === "string" && dateRegex.test(d.date))),
-        ),
-      };
-
-      const res = await fetch(`/api/projects/${projectId}/document`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ document: cleanedDraft }),
-      });
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        throw new Error((data as { error?: string }).error ?? "保存失败");
-      }
-      router.push(`/projects/${projectId}`);
-    } catch (e) {
-      setError(String(e));
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  // Draft confirmation screen
-  if (draft && projectId) {
-    return (
-      <div className="min-h-screen bg-lark-canvas">
-        <AppHeader
-          back={{ label: "返回", onClick: () => setDraft(null) }}
-          title={<span className="text-sm font-medium text-lark-1">确认项目主文档</span>}
-          actions={
-            <button
-              onClick={handleConfirmDraft}
-              disabled={saving}
-              className="px-4 py-1.5 rounded-lg text-sm font-medium bg-lark-blue text-white hover:bg-lark-blue-hover disabled:opacity-50 transition-colors"
-            >
-              {saving ? "保存中..." : "确认并进入项目"}
-            </button>
-          }
-        />
-
-        <div className="max-w-2xl mx-auto px-6 py-8 space-y-5">
-          <p className="text-sm text-lark-2">AI 已根据参考文件生成初始主文档，请确认内容后进入项目。</p>
-          <ProjectMemoryPanel
-            projectId={projectId}
-            memory={draft}
-            onUpdated={setDraft}
-            initialExpanded={true}
-          />
-          {error && <p className="text-sm text-lark-danger">{error}</p>}
-        </div>
-      </div>
-    );
-  }
-
-  // Creation form
   return (
     <div className="min-h-screen bg-lark-canvas">
       <AppHeader
@@ -126,35 +52,16 @@ export default function NewProjectPage() {
             type="text"
             value={name}
             onChange={(e) => setName(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); void handleCreate(); } }}
             placeholder="例如：产品 Q2 规划"
+            autoFocus
+            maxLength={100}
             className="w-full px-4 py-2.5 border border-lark-border rounded-lg text-sm bg-lark-surface text-lark-1 focus:outline-none focus:ring-2 focus:ring-lark-blue/40 placeholder:text-lark-4 transition-colors"
           />
+          <p className="text-xs text-lark-4">
+            建完就能用。需求文档、规范这类材料进项目页的「参考文件」上传，会和会议记录一样进检索。
+          </p>
         </div>
-
-        <label className="flex items-center gap-2.5 cursor-pointer select-none">
-          <input
-            type="checkbox"
-            checked={noDocument}
-            onChange={(e) => setNoDocument(e.target.checked)}
-            className="w-4 h-4 rounded accent-lark-blue"
-          />
-          <span className="text-sm text-lark-2">不需要项目主文档</span>
-          <span className="text-xs text-lark-4">（适合归档零散会议，无 AI 建议更新）</span>
-        </label>
-
-        {!noDocument && (
-          <div className="space-y-2">
-            <label className="text-xs font-semibold text-lark-3 uppercase tracking-wider">
-              参考文件 <span className="font-normal normal-case text-lark-4">（可选）</span>
-            </label>
-            <textarea
-              value={referenceText}
-              onChange={(e) => setReferenceText(e.target.value)}
-              placeholder="粘贴项目介绍、背景文档、需求文档等文本内容，AI 将据此生成初始项目主文档..."
-              className="w-full h-48 px-4 py-3 border border-lark-border rounded-lg text-sm bg-lark-surface text-lark-1 resize-none focus:outline-none focus:ring-2 focus:ring-lark-blue/40 placeholder:text-lark-4 transition-colors"
-            />
-          </div>
-        )}
 
         {error && <p className="text-sm text-lark-danger">{error}</p>}
 
@@ -163,7 +70,7 @@ export default function NewProjectPage() {
           disabled={loading || !name.trim()}
           className="w-full py-2.5 bg-lark-blue text-white rounded-lg text-sm font-medium hover:bg-lark-blue-hover disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
         >
-          {loading ? ((!noDocument && referenceText.trim()) ? "AI 生成主文档中..." : "创建中...") : "创建项目"}
+          {loading ? "创建中..." : "创建项目"}
         </button>
       </div>
     </div>

@@ -14,8 +14,6 @@ const LIMITS: Record<string, number> = {
   "POST:/api/meetings/ask": 20,
   "POST:/api/projects/ask": 20,
   "POST:/api/projects": 10,
-  "POST:/api/projects/diff": 10,
-  "POST:/api/projects/reprocess": 5,
   "POST:/api/projects/reembed": 2,
   "POST:/api/meetings/rechunk": 5,
   // 上传本身不调 LLM，但每份文件都会排一个解析任务，而解析要做几十次 embedding。

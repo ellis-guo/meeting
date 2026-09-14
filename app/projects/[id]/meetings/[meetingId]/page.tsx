@@ -1,39 +1,26 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
-import { useParams, useRouter, useSearchParams } from "next/navigation";
+import { useEffect, useState } from "react";
+import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { toast } from "sonner";
-import { AlertCircle, Pencil, Printer, Trash2, X } from "lucide-react";
+import { Pencil, Printer, Trash2, X } from "lucide-react";
 import AppHeader from "@/app/components/AppHeader";
 import SummaryPanel from "@/app/components/SummaryPanel";
 import TranscriptPanel from "@/app/components/TranscriptPanel";
-import DiffPanel from "@/app/components/DiffPanel";
 import MeetingAskPanel from "@/app/components/MeetingAskPanel";
-import { Summary, DocumentDiff, ProjectMemory } from "@/app/types";
+import { Summary } from "@/app/types";
 import { useConfirm } from "@/lib/ConfirmContext";
 import { addLineNumbers } from "@/lib/utils";
 
 type PopupState = { sourceLines: number[]; x: number; y: number } | null;
 
-const DIFF_PANEL_WIDTH = 520;
-
-/** 浮窗左上角必须留在视野内，窗口缩小后也不能把它推出屏幕。 */
-function clampToViewport(pos: { x: number; y: number }) {
-  return {
-    x: Math.max(0, Math.min(window.innerWidth - 100, pos.x)),
-    y: Math.max(0, Math.min(window.innerHeight - 60, pos.y)),
-  };
-}
-
 export default function MeetingDetailPage() {
   const params = useParams();
   const router = useRouter();
-  const searchParams = useSearchParams();
   const confirm = useConfirm();
   const projectId = params.id as string;
   const meetingId = params.meetingId as string;
-  const wantDiff = searchParams.get("diff") === "1";
 
   const [summary, setSummary] = useState<Summary | null>(null);
   const [numberedTranscript, setNumberedTranscript] = useState<string | null>(null);
@@ -47,115 +34,20 @@ export default function MeetingDetailPage() {
   const [popup, setPopup] = useState<PopupState>(null);
   const [highlightedLines, setHighlightedLines] = useState<number[]>([]);
 
-  const [documentDiff, setDocumentDiff] = useState<DocumentDiff | null>(null);
-  const [projectDocument, setProjectDocument] = useState<ProjectMemory | null>(null);
-  const [generatingDiff, setGeneratingDiff] = useState(false);
-  const [diffError, setDiffError] = useState<string | null>(null);
-  const [showDiffPanel, setShowDiffPanel] = useState(false);
-  const [diffStatus, setDiffStatus] = useState<string | null>(null);
-  const [processingStatus, setProcessingStatus] = useState<string | null>(null);
-  const [diffPos, setDiffPos] = useState<{ x: number; y: number } | null>(null);
-  const autoOpenedOnceRef = useRef(false);
-
-  // 首次打开浮窗时设定初始位置（屏幕右上）
-  useEffect(() => {
-    if (showDiffPanel && diffPos === null && typeof window !== "undefined") {
-      setDiffPos(clampToViewport({ x: window.innerWidth - DIFF_PANEL_WIDTH - 24, y: 80 }));
-    }
-  }, [showDiffPanel, diffPos]);
-
-  // 窗口缩小后把浮窗拉回视野，否则它会永久停在屏幕外，只能刷新页面。
-  useEffect(() => {
-    if (!showDiffPanel) return;
-    const onResize = () => setDiffPos((p) => (p ? clampToViewport(p) : p));
-    window.addEventListener("resize", onResize);
-    return () => window.removeEventListener("resize", onResize);
-  }, [showDiffPanel]);
-
-  const handleDiffDragStart = (e: React.MouseEvent<HTMLDivElement>) => {
-    if (!diffPos) return;
-    const startX = e.clientX;
-    const startY = e.clientY;
-    const startPos = { ...diffPos };
-    const onMove = (ev: MouseEvent) => {
-      setDiffPos(clampToViewport({
-        x: startPos.x + ev.clientX - startX,
-        y: startPos.y + ev.clientY - startY,
-      }));
-    };
-    const onUp = () => {
-      document.removeEventListener("mousemove", onMove);
-      document.removeEventListener("mouseup", onUp);
-    };
-    document.addEventListener("mousemove", onMove);
-    document.addEventListener("mouseup", onUp);
-  };
-
-  const loadProjectDoc = useCallback(async () => {
-    const r = await fetch(`/api/projects/${projectId}`);
-    if (r.ok) {
-      const d = await r.json();
-      setProjectDocument(d.document as ProjectMemory);
-    }
-  }, [projectId]);
-
   useEffect(() => {
     fetch(`/api/meetings/${meetingId}`)
       .then((r) => {
-        if (r.status === 404) { setNotFound(true); return null; }
+        if (!r.ok) { setNotFound(true); return null; }
         return r.json();
       })
       .then((data) => {
         if (!data) return;
         setSummary(data.summary as Summary);
         setNumberedTranscript(addLineNumbers(data.transcript as string));
-        setDiffStatus(data.diff_status ?? null);
-        setProcessingStatus(data.processing_status ?? null);
-        if (data.diff_status === "pending" && data.document_diff) {
-          setDocumentDiff(data.document_diff as DocumentDiff);
-        }
       })
+      .catch(() => setNotFound(true))
       .finally(() => setLoading(false));
   }, [meetingId]);
-
-  // 仅当 URL 带 ?diff=1（来自通知或项目页 banner 跳转）才**首次**自动展开 DiffPanel。
-  // 用户关闭后不再重新自动展开（autoOpenedOnceRef 锁住）。
-  // 直接 URL 访问 / 项目页直接点击 → 不自动展开，由 header 上的"主文档建议"按钮手动触发。
-  useEffect(() => {
-    if (wantDiff && !autoOpenedOnceRef.current && diffStatus === "pending" && documentDiff && !projectDocument) {
-      loadProjectDoc();
-    }
-  }, [wantDiff, diffStatus, documentDiff, projectDocument, loadProjectDoc]);
-
-  useEffect(() => {
-    if (wantDiff && !autoOpenedOnceRef.current && diffStatus === "pending" && documentDiff && projectDocument) {
-      setShowDiffPanel(true);
-      autoOpenedOnceRef.current = true;
-    }
-  }, [wantDiff, diffStatus, documentDiff, projectDocument]);
-
-  const openDiffDrawer = async () => {
-    if (!documentDiff) return;
-    if (!projectDocument) await loadProjectDoc();
-    setShowDiffPanel(true);
-  };
-
-  // Poll while diff is being generated in background
-  useEffect(() => {
-    if (processingStatus !== "processing" && processingStatus !== "pending") return;
-    const t = setInterval(async () => {
-      const r = await fetch(`/api/meetings/${meetingId}`);
-      if (!r.ok) return;
-      const d = await r.json();
-      setProcessingStatus(d.processing_status ?? null);
-      setDiffStatus(d.diff_status ?? null);
-      if (d.document_diff) setDocumentDiff(d.document_diff as DocumentDiff);
-      if (d.processing_status === "done" || d.processing_status === "failed") {
-        clearInterval(t);
-      }
-    }, 3000);
-    return () => clearInterval(t);
-  }, [meetingId, processingStatus]);
 
   const handleSourceClick = (sourceLines: number[], x: number, y: number) => {
     if (isEditing) return;
@@ -200,25 +92,6 @@ export default function MeetingDetailPage() {
     }
   };
 
-  const handleGenerateDiff = async () => {
-    setGeneratingDiff(true);
-    setDiffError(null);
-    try {
-      const res = await fetch(`/api/projects/${projectId}/meetings/${meetingId}/diff`, {
-        method: "POST",
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error ?? "生成失败");
-      setDocumentDiff(data.document_diff as DocumentDiff);
-      setProjectDocument(data.project_document as ProjectMemory);
-      setShowDiffPanel(true);
-    } catch (e) {
-      setDiffError(String(e));
-    } finally {
-      setGeneratingDiff(false);
-    }
-  };
-
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-lark-canvas">
@@ -246,15 +119,6 @@ export default function MeetingDetailPage() {
         title={<span className="text-sm text-lark-2">{date}</span>}
         actions={
           <>
-            {diffStatus === "pending" && documentDiff && !showDiffPanel && (
-              <button
-                onClick={openDiffDrawer}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium bg-lark-blue-light text-lark-blue hover:bg-lark-blue-light/70 border border-lark-blue/20 transition-colors"
-              >
-                <AlertCircle size={13} />
-                查看主文档建议
-              </button>
-            )}
             <button
               onClick={() => { setIsEditing((v) => !v); setPopup(null); }}
               className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
@@ -276,13 +140,6 @@ export default function MeetingDetailPage() {
               </button>
             )}
             <button
-              onClick={handleGenerateDiff}
-              disabled={generatingDiff}
-              className="px-3 py-1.5 rounded-lg text-sm font-medium border border-lark-border text-lark-2 hover:bg-lark-sunken disabled:opacity-50 transition-colors"
-            >
-              {generatingDiff ? "生成中..." : "更新主文档"}
-            </button>
-            <button
               onClick={() => window.print()}
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium border border-lark-border text-lark-2 hover:bg-lark-sunken transition-colors print:hidden"
             >
@@ -301,14 +158,8 @@ export default function MeetingDetailPage() {
         }
       />
 
-      {diffError && (
-        <div className="px-6 py-2 bg-lark-danger/5 border-b border-lark-danger/20 shrink-0">
-          <p className="text-xs text-lark-danger">{diffError}</p>
-        </div>
-      )}
-
       <div className="flex flex-1 overflow-hidden min-h-0">
-        <div className={`${showDiffPanel ? "hidden md:block" : ""} w-1/2 print:w-full overflow-y-auto border-r border-lark-border print:border-none p-6 print:p-8`}>
+        <div className="w-1/2 print:w-full overflow-y-auto border-r border-lark-border print:border-none p-6 print:p-8">
           <SummaryPanel
             summary={summary}
             isEditing={isEditing}
@@ -328,54 +179,6 @@ export default function MeetingDetailPage() {
       </div>
 
       <MeetingAskPanel meetingId={meetingId} onLineClick={handleLineClick} />
-
-      {/* DiffPanel 以可拖动浮窗形式弹出；不阻塞页面其他交互；× 关闭仅隐藏，diff_status 不变 */}
-      {showDiffPanel && documentDiff && projectDocument && diffPos && (
-        <aside
-          className="fixed bg-lark-surface rounded-xl border border-lark-border z-40 print:hidden flex flex-col"
-          style={{
-            left: diffPos.x,
-            top: diffPos.y,
-            width: DIFF_PANEL_WIDTH,
-            height: "min(700px, calc(100vh - 120px))",
-            boxShadow: "var(--lark-shadow-modal)",
-          }}
-        >
-          <div
-            onMouseDown={handleDiffDragStart}
-            className="flex items-center justify-between px-4 py-2.5 border-b border-lark-border shrink-0 cursor-move select-none rounded-t-xl bg-lark-sunken"
-          >
-            <span className="text-sm font-semibold text-lark-1">主文档更新建议</span>
-            <button
-              onMouseDown={(e) => e.stopPropagation()}
-              onClick={() => setShowDiffPanel(false)}
-              className="p-1 rounded-md text-lark-3 hover:text-lark-1 hover:bg-lark-surface transition-colors cursor-pointer"
-              aria-label="关闭"
-            >
-              <X size={16} />
-            </button>
-          </div>
-          <div className="flex-1 min-h-0 overflow-hidden">
-            <DiffPanel
-              diff={documentDiff}
-              projectId={projectId}
-              meetingId={meetingId}
-              projectDocument={projectDocument}
-              meetingDate={summary.meta.date ?? new Date().toISOString().slice(0, 10)}
-              onConfirmed={() => {
-                setShowDiffPanel(false);
-                setDocumentDiff(null);
-                setDiffStatus("confirmed");
-              }}
-              onDismissed={() => {
-                setShowDiffPanel(false);
-                setDocumentDiff(null);
-                setDiffStatus("dismissed");
-              }}
-            />
-          </div>
-        </aside>
-      )}
 
       {popup && !isEditing && (
         <div

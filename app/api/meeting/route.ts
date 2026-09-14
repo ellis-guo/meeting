@@ -4,9 +4,8 @@ import { prisma } from "@/lib/prisma";
 import { addLineNumbers, extractJSON } from "@/lib/utils";
 import { encrypt, encryptJSON, decryptJSON } from "@/lib/crypto";
 import { getDashScopeKey } from "@/lib/apiKey.server";
-import { callDashScope, callDashScopeStream, FAST_CHAT_MODEL } from "@/lib/dashscope";
-import { SUMMARY_SMART_PROMPT, SUMMARY_PROGRESS_PROMPT, MEMORY_DIFF_PROMPT } from "@/lib/prompts";
-import { validateDiff } from "@/lib/projectDocSchema";
+import { callDashScopeStream, FAST_CHAT_MODEL } from "@/lib/dashscope";
+import { SUMMARY_SMART_PROMPT, SUMMARY_PROGRESS_PROMPT } from "@/lib/prompts";
 import {
   type Section, type Summary,
   buildSummaryChunks, buildTranscriptChunks, insertChunks,
@@ -117,22 +116,20 @@ export async function POST(req: NextRequest) {
   if (!transcript?.trim()) return NextResponse.json({ error: "transcript is required" }, { status: 400 });
   if (transcript.length > 200_000) return NextResponse.json({ error: "transcript too large (max 200KB)" }, { status: 400 });
 
-  let project: { id: string; name: string; document: unknown; no_document: boolean } | null = null;
   if (project_id) {
-    const raw = await prisma.project.findFirst({ where: { id: project_id, user_id: userId } });
-    if (!raw) return NextResponse.json({ error: "Project not found" }, { status: 404 });
-    project = { id: raw.id, name: raw.name, document: raw.document ? decryptJSON(raw.document) : {}, no_document: raw.no_document };
+    const owned = await prisma.project.findFirst({
+      where: { id: project_id, user_id: userId },
+      select: { id: true },
+    });
+    if (!owned) return NextResponse.json({ error: "Project not found" }, { status: 404 });
   }
 
   const numbered = addLineNumbers(transcript);
   const systemPrompt = template === "project" ? SUMMARY_PROGRESS_PROMPT : SUMMARY_SMART_PROMPT;
-  // no_document 项目没有主文档，塞空对象只会给模型噪音
-  const hasProjectDoc =
-    !!project && !project.no_document &&
-    Object.keys(project.document as Record<string, unknown>).length > 0;
+  // 主文档不再作为 <project_context> 喂进来：它已经不被任何流程更新了，
+  // 继续喂等于让模型参考一份只会越来越旧的东西（PRD 4.5）。
   const contextLines = [
     langRule,
-    hasProjectDoc ? `<project_context>\n${JSON.stringify(project!.document)}\n</project_context>` : null,
     date ? `会议日期：${date}` : null,
     time ? `会议时间：${time}` : null,
     `以下是会议记录：\n\n${numbered}`,
@@ -250,8 +247,7 @@ export async function POST(req: NextRequest) {
         // prisma.chunk.create，一场会议几百条就是几百个来回。
         await insertChunks(chunksToInsert);
 
-        // SSE done — diff is no longer in payload (will land asynchronously
-        // into Meeting.document_diff and surface via Notification)
+        // SSE done：摘要和 chunk 都已落库，向量由后台 reindex 任务补齐
         controller.enqueue(send("done", {
           meeting_id: meeting.id,
           summary,
@@ -284,101 +280,15 @@ export async function POST(req: NextRequest) {
         // 立刻在后台开跑，不等下一次 tick——tick 是每小时一次的兜底
         startBackgroundDrain();
 
-        if (project && !project.no_document) {
-          // Project meetings: generate diff in background, retry once on
-          // failure, then either persist diff + notify or persist failure +
-          // notify so the user can recover.
-          (async () => {
-            const projectForDiff = project;
-            const diffPrompt = `${langRule}\n\n会议日期：${meetingDate}\n\n当前项目主文档：\n${JSON.stringify(projectForDiff.document, null, 2)}\n\n本次会议摘要：\n${JSON.stringify(typedSummary, null, 2)}\n\n请输出需要更新的字段及建议内容。`;
-
-            // 一次完整尝试 = 调 LLM + extractJSON + schema 校验。
-            // 任一步失败均视作失败，进入下一次重试。
-            const tryGenerate = async (): Promise<unknown> => {
-              const raw = (await callDashScope(MEMORY_DIFF_PROMPT, diffPrompt, apiKey, FAST_CHAT_MODEL)).content;
-              const parsed = extractJSON(raw);
-              const err = validateDiff(parsed);
-              if (err) throw new Error(`Diff schema invalid: ${err}`);
-              return parsed;
-            };
-
-            let document_diff: unknown = null;
-            let lastError: unknown = null;
-            // 总共 3 次尝试：原始 + 2 次重试
-            for (let attempt = 0; attempt < 3; attempt++) {
-              try {
-                document_diff = await tryGenerate();
-                lastError = null;
-                break;
-              } catch (e) {
-                lastError = e;
-                if (attempt < 2) await new Promise((r) => setTimeout(r, 1000));
-              }
-            }
-
-            if (document_diff) {
-              await prisma.meeting.update({
-                where: { id: meeting.id },
-                data: {
-                  document_diff: encryptJSON(document_diff),
-                  diff_status: "pending",
-                  processing_status: "done",
-                },
-              }).catch(() => {});
-              await prisma.notification.create({
-                data: {
-                  user_id: userId,
-                  type: "diff_pending",
-                  title: "主文档更新待处理",
-                  body: `项目「${projectForDiff.name}」生成了新的主文档更新建议，待你确认。`,
-                  link: `/projects/${projectForDiff.id}/meetings/${meeting.id}?diff=1`,
-                },
-              }).catch(() => {});
-            } else {
-              await prisma.meeting.update({
-                where: { id: meeting.id },
-                data: { processing_status: "failed" },
-              }).catch(() => {});
-              await prisma.processingLog.create({
-                data: {
-                  level: "error",
-                  meeting_id: meeting.id,
-                  context: encryptJSON({ type: "diff_generation_failed", error: String(lastError) }),
-                },
-              }).catch(() => {});
-              await prisma.notification.create({
-                data: {
-                  user_id: userId,
-                  type: "diff_failed",
-                  title: "主文档更新生成失败",
-                  body: `项目「${projectForDiff.name}」的会议摘要已保存，但主文档更新建议生成失败，可在会议页重试。`,
-                  link: `/projects/${projectForDiff.id}/meetings/${meeting.id}?diff=1`,
-                },
-              }).catch(() => {});
-            }
-          })().catch(async (err) => {
-            // 兜底：IIFE 内同步抛出的异常（如 encryptJSON 失败）不会被上面的
-            // 逐条 .catch() 接住，未捕获的 rejection 在 Node 默认配置下会杀进程。
-            await prisma.meeting
-              .update({ where: { id: meeting.id }, data: { processing_status: "failed" } })
-              .catch(() => {});
-            await prisma.processingLog
-              .create({
-                data: {
-                  level: "error",
-                  meeting_id: meeting.id,
-                  context: encryptJSON({ type: "diff_task_crashed", error: String(err) }),
-                },
-              })
-              .catch(() => {});
-          });
-        } else {
-          // Standalone meeting: nothing more to do, mark done.
-          prisma.meeting.update({
-            where: { id: meeting.id },
-            data: { processing_status: "done" },
-          }).catch(() => {});
-        }
+        // 摘要、chunk、向量任务都安排好了，这场会议就算处理完了。
+        //
+        // 原来这里还挂着一大段"生成主文档更新建议 → 写 document_diff → 发通知
+        // 让用户确认"。整套随主文档一起下线了（PRD 4.5/5.2）：主文档降级成
+        // 索引层之后不呈现、不检索、不引用，也就没有什么需要用户确认的。
+        // 顺带省掉了每场会议一次 LLM 调用。
+        await prisma.meeting
+          .update({ where: { id: meeting.id }, data: { processing_status: "done" } })
+          .catch(() => {});
 
       } catch (e) {
         try { controller.enqueue(send("error", { error: String(e) })); controller.close(); } catch { /* already closed */ }

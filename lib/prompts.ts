@@ -84,7 +84,6 @@ ${CONTENT_TYPE_GUIDE}
 ${SHARED_SCHEMA}
 
 ## 字段说明
-- 若 context 中包含 <project_context>，将其作为背景参考以理解成员角色、项目术语和当前状态；摘要内容须以本次会议记录为准。
 - meta.date：优先使用 context 中提供的会议日期；若未提供则从会议记录中提取，仍未找到则为 null
 - meta.time：从会议记录中提取会议开始时间，若未提及则为 null
 - meta.participants：提取会议记录中出现的所有发言者姓名
@@ -100,79 +99,6 @@ ${HUMANISTIC_NOTE_RULE}
 6. 下次会议 — "text" 类型；仅在会议中提及时包含
 7. 其他 — "text" 类型；仅在有其他内容时包含
 如有必要可增加额外章节。议题详情应为摘要中最长、最详细的章节。`;
-
-// ── 项目主文档 Prompts ────────────────────────────────────────────────────────
-
-export const MEMORY_INIT_PROMPT = `## 角色
-你是专业的项目文档助手，从参考文件中提取结构化信息，生成项目主文档初稿。参考文件可能是课程要求、PRD、技术规范或设计文档等。
-
-## 规则
-<rules>
-1. 纯 JSON 输出，无 Markdown 或解释文字。
-2. 输出 schema 全部字段；无信息填 null 或 []，不得省略。
-3. 主动归纳：参考文件中有对应信息就提取；已选定的技术/工具即为决策，无需被明确标注。
-4. 语言：中文为主；术语格式 中文名称(英文原文)，如"向量数据库(pgvector)"；无中文对应时保留英文。
-</rules>
-
-## 字段定义
-<fields>
-- overview: 项目是什么、面向谁、要完成什么，3句话；无背景信息时填 null。（goals 是其模块级细分，不在此重复）
-- goals: 模块级可验收交付目标，动宾结构；实现级细节属于 checklist 不在此处。
-- members: 姓名+职能；未提及时填 []。
-- milestones: 有截止日期填 YYYY-MM-DD 否则 null；status 默认 pending。
-- key_decisions / open_issues: 初始化阶段固定填 null。
-- glossary: 专有名词、缩写、行话；无时填 []。
-- checklist: 所有可单独验收的实现级要求，逐条提取不合并，status 默认 pending。粒度：每条一句话能描述清楚验收条件（"使用 AES-256-GCM 加密传输"而非"实现数据加密"）。
-</fields>
-
-## 输出格式
-<schema>
-{
-  "overview": "string or null",
-  "goals": ["string"],
-  "members": [{ "name": "string", "role": "string" }],
-  "milestones": [{ "date": "YYYY-MM-DD or null", "title": "string", "status": "done | pending" }],
-  "key_decisions": null,
-  "open_issues": null,
-  "glossary": [{ "term": "string", "definition": "string" }],
-  "checklist": [{ "item": "string", "status": "done | pending" }]
-}
-</schema>`;
-
-export const MEMORY_DIFF_PROMPT = `## 角色
-你是专业的项目文档维护助手，根据本次会议摘要识别主文档中需要更新的字段，输出最小化差量建议。
-
-## 规则
-<rules>
-1. 纯 JSON 输出，无 Markdown 或解释文字。
-2. 仅基于会议摘要中明确提及的内容；未涉及的字段不出现在 updates 中。
-3. 字段内容保持短语级别，与主文档风格一致。
-4. 每条更新附 reason ≤20字，说明依据。
-5. key_decisions 新增条目的 date 用 context 中提供的会议日期（YYYY-MM-DD）。
-</rules>
-
-## 字段操作规则
-<fields>
-- key_decisions: 只可追加新条目，禁止修改或删除已有条目。new = [...原条目, 新条目]。
-- checklist: 只可将 pending→done，不新增不删除。new 为完整数组。
-- open_issues: 条目永不删除。新增：{ "issue":"...", "owner":null, "opened_at":"会议日期", "resolved_at":null }；标记解决：resolved_at 设为会议日期。new 为完整数组。
-- milestones: 可 pending→done 或新增里程碑；new 为完整数组。
-- goals / members / glossary / overview: 可新增或更新，new 为完整新值。
-</fields>
-
-## 输出格式
-<schema>
-{
-  "updates": [
-    {
-      "field": "overview | goals | members | milestones | key_decisions | open_issues | risks | glossary | checklist",
-      "old": <原值>,
-      "new": <新值>,
-      "reason": "≤20字，说明依据来自会议哪部分"
-    }
-  ]
-}
-</schema>`;
 
 // ── 单会议问答 Prompts ────────────────────────────────────────────────────────
 
@@ -229,15 +155,14 @@ export const ASK_SYSTEM_PROMPT = `## 角色
    - 会议记录片段 → [YYYY-MM-DD · 小节标题]
    - 参考文件片段 → [参考文件 · 文件名 › 章节标题]（照抄片段上方方括号里的原文，不要自己改写）
 7. 以结论性段落收尾，给出明确判断。
-8. 项目主文档是最高优先级的背景知识，应优先用于回答进度、目标、成员、决策类问题。
-9. **参考文件片段不是会议记录**，是项目上传的文档（需求、规范、原件）。它们没有日期，
+8. **参考文件片段不是会议记录**，是项目上传的文档（需求、规范、原件）。它们没有日期，
    **绝不要给它们编一个日期，也不要把它们的内容说成"某次会议上提到"**。
    内容冲突时说清楚各自的出处：文档写的是什么、会议后来改成了什么。
 
 ## 输出格式
 第一部分：完整回答文字（可含换行和 **粗体**）
 第二部分：另起一行写 %%SOURCES%%，然后输出来源 JSON 数组：
-[{"chunk_type":"summary | transcript | reference | project_document","section_title":"字符串或null","speaker":"字符串或null","meeting_date":"YYYY-MM-DD或null"}]
+[{"chunk_type":"summary | transcript | reference","section_title":"字符串或null","speaker":"字符串或null","meeting_date":"YYYY-MM-DD或null"}]
 其中 chunk_type=reference 时，section_title 填**片段方括号里的完整标题**（形如「文件名 › 章节标题」），meeting_date 必须为 null。`;
 
 export const ANALYZE_SYSTEM_PROMPT = `## 角色
@@ -272,7 +197,7 @@ export const ANALYZE_SYSTEM_PROMPT = `## 角色
 
 | 意图 | 触发条件 |
 |---|---|
-| project | 宏观问题，主文档足够回答（目标/成员/背景/整体进度） |
+| project | 宏观问题，看各次会议的摘要就能回答（目标/成员/背景/整体进度） |
 | speaker | 问题中明确出现人名，询问该人的发言/观点/行动 |
 | date | 含具体日期（"4月9日"、"上周三"等） |
 | meeting | 询问某次/多次会议内容，无具体日期 |

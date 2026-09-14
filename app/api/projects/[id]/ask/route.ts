@@ -213,20 +213,9 @@ export async function POST(
     return NextResponse.json({ error: "Project not found" }, { status: 404 });
   }
 
-  // Safety gate: any meeting with diff_status='pending' blocks project-level
-  // questions until the user confirms or dismisses those updates.
-  const pendingDiffCount = await prisma.meeting.count({
-    where: { project_id: projectId, diff_status: "pending" },
-  });
-  if (pendingDiffCount > 0) {
-    return NextResponse.json(
-      {
-        error: `请先处理 ${pendingDiffCount} 条主文档更新建议后再提问`,
-        pending_diff_count: pendingDiffCount,
-      },
-      { status: 409 },
-    );
-  }
+  // 原来这里有一道门：只要有会议的 diff_status='pending'，项目提问一律 409，
+  // 要求用户先去确认主文档更新。主文档下线后这道门连同 diff 流程一起没了
+  // ——"不被溯源 ⇔ 不需要确认"是同一个决策的两面（PRD 5.2）。
 
   const tTotal = Date.now();
   const today = new Date().toISOString().slice(0, 10);
@@ -410,7 +399,7 @@ export async function POST(
     : Promise.resolve([]);
 
   if (effectiveIntent === "project") {
-    // Project doc (always in context) + summary chunks only
+    // 宏观问题：只看会议摘要（主文档已下线，参考文件由 referencePromise 那一路带上）
     summaryResultsPerVec = await Promise.all(
       allVecStrs.map(
         (vecStr) =>
@@ -707,30 +696,15 @@ export async function POST(
       .filter((p): p is ParentRow => !!p);
   }
 
-  const projectDoc = project.document
-    ? decryptJSON<Record<string, unknown>>(project.document)
-    : null;
-
+  // 主文档不再进生成上下文（PRD 4.5：不呈现、不检索、不引用）。
+  //
+  // 它原来是"项目目标/成员/背景"这类问题的兜底背景。现在这些只能从会议 chunk
+  // 和参考文件里来——而那两样都是**能被引用、能点回原文**的。这正是这个决策想要
+  // 的：答案里的每一句都该有出处，而不是来自一份用户看不见、也没法验证的文档。
+  //
+  // 索引层（index_json）**不是**它的替代品：索引层只进查询分析，结构性地不进
+  // 生成上下文，见本文件开头 indexDigest 的注释。
   const contextParts: string[] = [];
-  if (projectDoc) {
-    if (effectiveIntent === "audit") {
-      const { checklist, ...docWithoutChecklist } = projectDoc;
-      contextParts.push(
-        `项目主文档：\n${JSON.stringify(docWithoutChecklist, null, 2)}`,
-      );
-      if (Array.isArray(checklist) && checklist.length > 0) {
-        contextParts.push(
-          `需求 Checklist（请逐条对照会议记录评估完成状态）：\n${JSON.stringify(checklist, null, 2)}`,
-        );
-      }
-    } else {
-      // eslint-disable-next-line @typescript-eslint/no-unused-vars
-      const { checklist: _omit, ...docWithoutChecklist } = projectDoc;
-      contextParts.push(
-        `项目主文档：\n${JSON.stringify(docWithoutChecklist, null, 2)}`,
-      );
-    }
-  }
 
   const chunkTexts: string[] = [];
   for (const c of summaryChunks) {
@@ -878,18 +852,6 @@ export async function POST(
       }
 
       const sources = llmSources.map((s) => {
-        if (s.chunk_type === "project_document") {
-          return {
-            meeting_id: null,
-            reference_doc_id: null,
-            chunk_type: "project_document",
-            section_title: s.section_title ?? null,
-            speaker: null,
-            line_start: null,
-            line_end: null,
-            meeting_date: null,
-          };
-        }
         if (s.chunk_type === "reference") {
           // section_title 的形态是 `文件名 › 章节标题`（见 buildSectionChunks），
           // 取第一段换回文件名。没有标题的文档就只有文件名，split 后照样是它。
@@ -931,7 +893,7 @@ export async function POST(
         };
       });
 
-      const citationCounts = { project_document: 0, summary: 0, transcript: 0, reference: 0 };
+      const citationCounts = { summary: 0, transcript: 0, reference: 0 };
       for (const s of sources) {
         const t = s.chunk_type as keyof typeof citationCounts;
         if (t in citationCounts) citationCounts[t]++;
@@ -989,11 +951,6 @@ export async function POST(
         parent_chunks_used: parentRows.length,
         no_parent_fallback: noParentTranscript.length,
         reference_chunks_used: referenceChunks.length,
-        has_project_doc: !!projectDoc,
-        has_checklist:
-          effectiveIntent === "audit" &&
-          Array.isArray(projectDoc?.checklist) &&
-          (projectDoc.checklist as unknown[]).length > 0,
         chunks_total: totalChunks,
         chunks_with_embedding: embeddedChunks,
         recent_embed_errors: recentEmbedErrors,

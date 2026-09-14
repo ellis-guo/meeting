@@ -23,7 +23,6 @@ export async function GET(
           created_at: true,
           summary: true,
           processing_status: true,
-          diff_status: true,
         },
       },
     },
@@ -33,10 +32,12 @@ export async function GET(
     return NextResponse.json({ error: "Project not found" }, { status: 404 });
   }
 
+  // document / reference_files / no_document 不再返回：主文档已下线（PRD 4.5），
+  // 前端没有任何地方渲染它们，继续解密只是白白多做一次 AES 和一份传输。
   return NextResponse.json({
     ...project,
-    document: project.document ? decryptJSON(project.document) : {},
-    reference_files: project.reference_files ? decryptJSON(project.reference_files) : [],
+    document: undefined,
+    reference_files: undefined,
     meetings: project.meetings.map((m) => ({
       ...m,
       summary: m.summary ? decryptJSON(m.summary) : null,

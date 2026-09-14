@@ -34,36 +34,10 @@ export type Summary = {
   humanistic_note: string | null;
 };
 
-export type ProjectMemory = {
-  overview: string | null;
-  goals: string[];
-  members: Array<{ name: string; role: string }>;
-  milestones: Array<{ date: string | null; title: string; status: "done" | "pending" }>;
-  key_decisions: Array<{ date: string | null; decision: string; rationale: string | null }>;
-  open_issues: Array<{ issue: string; owner: string | null; opened_at: string | null; resolved_at: string | null }>;
-  risks: Array<{ risk: string; mitigation: string | null }>;
-  glossary: Array<{ term: string; definition: string }>;
-  checklist: Array<{ item: string; status: "done" | "pending" }>;
-  [key: string]: unknown;
-};
-
-export type DiffUpdate = {
-  field: "overview" | "goals" | "members" | "milestones" | "key_decisions" | "open_issues" | "risks" | "glossary" | "checklist";
-  old: unknown;
-  new: unknown;
-  reason: string;
-};
-
-export type DocumentDiff = {
-  updates: DiffUpdate[];
-};
-
 export type Project = {
   id: string;
   name: string;
   created_at: string;
-  document: ProjectMemory;
-  no_document: boolean;
   meetings?: MeetingMeta[];
 };
 
@@ -73,5 +47,4 @@ export type MeetingMeta = {
   summary: Summary;
   transcript?: string;
   processing_status?: "pending" | "processing" | "done" | "failed";
-  diff_status?: "pending" | "confirmed" | "dismissed" | null;
 };

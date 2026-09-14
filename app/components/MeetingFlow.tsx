@@ -19,7 +19,7 @@ type ChunksWarning = { matched_lines: number; total_lines: number };
 type Meta = Summary["meta"];
 
 // 注：主文档 diff 不在本组件处理。Phase 9 起 diff 由后台异步生成落库，
-// 在项目内会议详情页读 Meeting.document_diff 渲染，这里只负责“输入 → 摘要”。
+// 这里只负责“输入 → 摘要”，落库和建索引由后端完成。
 interface Props {
   projectId?: string;
 }
@@ -105,8 +105,7 @@ export default function MeetingFlow({ projectId }: Props) {
           setStreamingSections((prev) => [...prev, data as unknown as Section]);
         } else if (event === "done") {
           setSummary(data.summary as Summary);
-          // document_diff 不再随 SSE 返回，由后台异步生成并落库；
-          // 项目会议在详情页通过 meeting.document_diff 渲染 DiffPanel。
+          // 向量化由后台的 reindex 任务补齐，不阻塞这里。
           setMeetingId((data.meeting_id as string | null) ?? null);
           setChunksWarning((data.chunks_warning as ChunksWarning | null) ?? null);
           setPhase("complete");

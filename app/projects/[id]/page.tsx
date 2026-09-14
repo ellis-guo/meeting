@@ -4,11 +4,10 @@ import { useEffect, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { toast } from "sonner";
-import { AlertCircle, ChevronRight, Plus, RefreshCw, Trash2 } from "lucide-react";
+import { ChevronRight, Plus, RefreshCw, Trash2 } from "lucide-react";
 import { Project } from "@/app/types";
 import AppHeader from "@/app/components/AppHeader";
 import ProjectAskPanel from "@/app/components/ProjectAskPanel";
-import ProjectMemoryPanel from "@/app/components/ProjectMemoryPanel";
 import ReferenceDocsPanel from "@/app/components/ReferenceDocsPanel";
 import { useConfirm } from "@/lib/ConfirmContext";
 
@@ -17,12 +16,10 @@ type MeetingCardData = {
   created_at: string;
   summary: { meta: { date: string | null; participants: string[] } };
   processing_status?: string;
-  diff_status?: string | null;
 };
 
 function StatusBadge({ meeting }: { meeting: MeetingCardData }) {
   const status = meeting.processing_status;
-  const diff = meeting.diff_status;
 
   if (status === "processing" || status === "pending") {
     return (
@@ -35,13 +32,6 @@ function StatusBadge({ meeting }: { meeting: MeetingCardData }) {
     return (
       <span className="text-[10px] px-2 py-0.5 rounded-full bg-lark-danger/10 text-lark-danger font-medium">
         生成失败
-      </span>
-    );
-  }
-  if (diff === "pending") {
-    return (
-      <span className="text-[10px] px-2 py-0.5 rounded-full bg-lark-blue-light text-lark-blue font-medium">
-        待确认主文档
       </span>
     );
   }
@@ -160,8 +150,7 @@ export default function ProjectDetailPage() {
   useEffect(() => {
     fetch(`/api/projects/${id}`)
       .then((r) => {
-        // 只判 404 的话，5xx 会把 { error } 当成 project 塞进 state，
-        // 随后 project.document 为 undefined，ProjectMemoryPanel 直接白屏。
+        // 只判 404 的话，5xx 会把 { error } 当成 project 塞进 state，页面直接白屏。
         if (!r.ok) { setNotFound(true); return null; }
         return r.json();
       })
@@ -190,7 +179,6 @@ export default function ProjectDetailPage() {
     );
   }
 
-  const pendingMeetings = (project.meetings ?? []).filter((m) => m.diff_status === "pending");
 
   return (
     <div className="min-h-screen bg-lark-canvas">
@@ -256,33 +244,9 @@ export default function ProjectDetailPage() {
       />
 
       <main className="max-w-3xl mx-auto px-8 py-8 space-y-6">
-        {pendingMeetings.length > 0 && (
-          <button
-            onClick={() => router.push(`/projects/${id}/meetings/${pendingMeetings[0].id}?diff=1`)}
-            className="w-full rounded-xl border border-lark-blue/30 bg-lark-blue-light/40 px-4 py-3 flex items-center gap-3 text-left hover:bg-lark-blue-light/60 transition-colors"
-          >
-            <AlertCircle size={16} className="text-lark-blue shrink-0" />
-            <div className="flex-1 min-w-0">
-              <p className="text-sm font-medium text-lark-1">
-                {pendingMeetings.length} 条主文档更新建议待处理
-              </p>
-              <p className="text-xs text-lark-3 mt-0.5">点击进入第一条进行确认或忽略</p>
-            </div>
-            <ChevronRight size={14} className="text-lark-blue shrink-0" />
-          </button>
-        )}
-
-        {!project.no_document && (
-          <ProjectMemoryPanel
-            projectId={id}
-            memory={project.document}
-            onUpdated={(updated) => setProject((p) => p ? { ...p, document: updated } : p)}
-          />
-        )}
-
         <ReferenceDocsPanel projectId={id} />
 
-        <ProjectAskPanel projectId={id} blocked={pendingMeetings.length > 0} blockedCount={pendingMeetings.length} />
+        <ProjectAskPanel projectId={id} />
 
         <section className="space-y-3">
           <h2 className="text-xs font-semibold text-lark-3 uppercase tracking-wider">历史会议</h2>
