@@ -1,9 +1,9 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { UserButton } from "@clerk/nextjs";
-import { Plus, Settings, FileText, ChevronRight } from "lucide-react";
+import { AlertCircle, Plus, Settings, FileText, ChevronRight } from "lucide-react";
 import { Project } from "./types";
 import AppHeader from "./components/AppHeader";
 
@@ -13,18 +13,41 @@ export default function Home() {
   const [projects, setProjects] = useState<Project[]>([]);
   const [standaloneMeetings, setStandaloneMeetings] = useState<StandaloneMeeting[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadFailed, setLoadFailed] = useState(false);
 
-  useEffect(() => {
-    Promise.all([
-      fetch("/api/projects").then((r) => r.json()),
-      fetch("/api/meeting").then((r) => r.json()),
-    ])
-      .then(([projectsData, meetingsData]) => {
-        setProjects(projectsData.projects ?? []);
-        setStandaloneMeetings(meetingsData.meetings ?? []);
-      })
-      .finally(() => setLoading(false));
+  // 自己接住异常，不在 effect 的同步路径上 .catch(setState)——那样会触发级联渲染
+  // （eslint 的 react-hooks 规则会报）。
+  const load = useCallback(async () => {
+    setLoading(true);
+    setLoadFailed(false);
+    try {
+      const [projectsRes, meetingsRes] = await Promise.all([
+        fetch("/api/projects"),
+        fetch("/api/meeting"),
+      ]);
+      // 不判 r.ok 就 .json() 会在 500 空响应体上炸在 JSON 解析里，报出来的错和
+      // 真实原因毫无关系——这个项目踩过一次（登录后页面全空 +
+      // "Failed to execute 'json' on 'Response'"）。
+      //
+      // 这里尤其要紧：失败必须有**可见**的错误态。原来两个 fetch 既不判 r.ok 也
+      // 没有 .catch()，整个 Promise.all reject 成未捕获异常，两个 setState 都不
+      // 执行，页面就停在"还没有项目"——和真的没有项目长得一模一样，用户和排查的
+      // 人都会被误导到数据丢失的方向去。
+      if (!projectsRes.ok || !meetingsRes.ok) { setLoadFailed(true); return; }
+      const [projectsData, meetingsData] = await Promise.all([
+        projectsRes.json(),
+        meetingsRes.json(),
+      ]);
+      setProjects(projectsData.projects ?? []);
+      setStandaloneMeetings(meetingsData.meetings ?? []);
+    } catch {
+      setLoadFailed(true);
+    } finally {
+      setLoading(false);
+    }
   }, []);
+
+  useEffect(() => { void load(); }, [load]);
 
   return (
     <div className="min-h-screen bg-lark-canvas">
@@ -77,7 +100,25 @@ export default function Home() {
             <p className="text-sm text-lark-3">加载中...</p>
           )}
 
-          {!loading && projects.length === 0 && (
+          {/* 加载失败必须和"没有数据"区分开——见上面 load() 里的注释 */}
+          {!loading && loadFailed && (
+            <div className="rounded-xl border border-dashed border-lark-border p-10 text-center space-y-3">
+              <AlertCircle size={20} className="mx-auto text-lark-3" />
+              <p className="text-sm text-lark-2">加载失败，没能读到你的项目列表</p>
+              <p className="text-xs text-lark-3">
+                这不代表数据丢了——是这次请求没成功。
+              </p>
+              <button
+                type="button"
+                onClick={() => void load()}
+                className="inline-flex items-center gap-1 text-sm text-lark-blue hover:underline"
+              >
+                重试
+              </button>
+            </div>
+          )}
+
+          {!loading && !loadFailed && projects.length === 0 && (
             <div className="rounded-xl border border-dashed border-lark-border p-10 text-center space-y-2">
               <p className="text-sm text-lark-3">还没有项目</p>
               <Link
@@ -90,7 +131,7 @@ export default function Home() {
             </div>
           )}
 
-          {!loading && projects.length > 0 && (
+          {!loading && !loadFailed && projects.length > 0 && (
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               {projects.map((project) => (
                 <Link
