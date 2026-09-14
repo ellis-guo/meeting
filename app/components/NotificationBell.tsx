@@ -66,12 +66,12 @@ export default function NotificationBell() {
           if (!open) void refresh();
           setOpen((v) => !v);
         }}
-        className="relative w-8 h-8 rounded-full hover:bg-lark-sunken flex items-center justify-center text-lark-2 hover:text-lark-1 transition-colors"
+        className="relative w-8 h-8 rounded-full hover:bg-tm-sunken flex items-center justify-center text-tm-2 hover:text-tm-1 transition-colors"
         aria-label="通知"
       >
         <Bell size={16} />
         {unread > 0 && (
-          <span className="absolute -top-0.5 -right-0.5 min-w-[16px] h-[16px] px-1 rounded-full bg-lark-danger text-white text-[10px] font-medium flex items-center justify-center">
+          <span className="absolute -top-0.5 -right-0.5 min-w-[16px] h-[16px] px-1 rounded-full bg-tm-danger text-white text-[10px] font-medium flex items-center justify-center">
             {unread > 99 ? "99+" : unread}
           </span>
         )}
@@ -79,15 +79,15 @@ export default function NotificationBell() {
 
       {open && (
         <div
-          className="absolute top-10 right-0 w-80 max-h-[480px] rounded-xl bg-lark-surface border border-lark-border overflow-hidden flex flex-col z-50"
-          style={{ boxShadow: "var(--lark-shadow-modal)" }}
+          className="absolute top-10 right-0 w-80 max-h-[480px] rounded-xl bg-tm-surface border border-tm-border overflow-hidden flex flex-col z-50"
+          style={{ boxShadow: "var(--tm-shadow-modal)" }}
         >
-          <div className="flex items-center justify-between px-4 py-3 border-b border-lark-border">
-            <span className="text-sm font-medium text-lark-1">通知</span>
+          <div className="flex items-center justify-between px-4 py-3 border-b border-tm-border">
+            <span className="text-sm font-medium text-tm-1">通知</span>
             {unread > 0 && (
               <button
                 onClick={() => void markAllRead()}
-                className="text-xs text-lark-blue hover:underline flex items-center gap-1"
+                className="text-xs text-tm-brand hover:underline flex items-center gap-1"
               >
                 <Check size={12} />
                 全部已读
@@ -97,24 +97,24 @@ export default function NotificationBell() {
 
           <div className="flex-1 overflow-y-auto">
             {items.length === 0 ? (
-              <div className="px-4 py-8 text-center text-sm text-lark-3">暂无通知</div>
+              <div className="px-4 py-8 text-center text-sm text-tm-3">暂无通知</div>
             ) : (
               items.map((n) => (
                 <button
                   key={n.id}
                   onClick={() => handleItemClick(n)}
-                  className={`w-full text-left px-4 py-3 border-b border-lark-border last:border-0 hover:bg-lark-sunken transition-colors ${
-                    n.read ? "" : "bg-lark-blue-light/40"
+                  className={`w-full text-left px-4 py-3 border-b border-tm-border last:border-0 hover:bg-tm-sunken transition-colors ${
+                    n.read ? "" : "bg-tm-brand-light/40"
                   }`}
                 >
                   <div className="flex items-start gap-2">
                     {!n.read && (
-                      <span className="mt-1.5 w-1.5 h-1.5 rounded-full bg-lark-blue shrink-0" />
+                      <span className="mt-1.5 w-1.5 h-1.5 rounded-full bg-tm-brand shrink-0" />
                     )}
                     <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium text-lark-1 truncate">{n.title}</p>
-                      <p className="text-xs text-lark-3 mt-0.5 line-clamp-2">{n.body}</p>
-                      <p className="text-[10px] text-lark-4 mt-1">{timeAgo(n.created_at)}</p>
+                      <p className="text-sm font-medium text-tm-1 truncate">{n.title}</p>
+                      <p className="text-xs text-tm-3 mt-0.5 line-clamp-2">{n.body}</p>
+                      <p className="text-[10px] text-tm-4 mt-1">{timeAgo(n.created_at)}</p>
                     </div>
                   </div>
                 </button>

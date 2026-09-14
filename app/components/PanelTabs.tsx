@@ -21,7 +21,7 @@ export default function PanelTabs({
   return (
     <div
       role="tablist"
-      className="flex md:hidden border-b border-lark-border shrink-0 print:hidden"
+      className="flex md:hidden border-b border-tm-border shrink-0 print:hidden"
     >
       {tabs.map((t) => (
         <button
@@ -31,8 +31,8 @@ export default function PanelTabs({
           onClick={() => onChange(t.key)}
           className={`flex-1 py-2.5 text-sm font-medium transition-colors ${
             value === t.key
-              ? "text-lark-blue border-b-2 border-lark-blue"
-              : "text-lark-3 border-b-2 border-transparent hover:text-lark-2"
+              ? "text-tm-brand border-b-2 border-tm-brand"
+              : "text-tm-3 border-b-2 border-transparent hover:text-tm-2"
           }`}
         >
           {t.label}

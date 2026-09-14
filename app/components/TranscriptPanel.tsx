@@ -24,18 +24,18 @@ export default function TranscriptPanel({
   const highlighted = new Set(highlightedLines);
 
   return (
-    <div className="font-mono text-xs text-lark-2 space-y-0.5">
+    <div className="font-mono text-xs text-tm-2 space-y-0.5">
       {lines.map(({ lineNum, content }) => (
         <div
           key={lineNum}
           id={`line-${lineNum}`}
           className={`flex gap-3 px-2 py-1 rounded transition-colors ${
             highlighted.has(lineNum)
-              ? "bg-lark-blue-light text-lark-blue"
-              : "hover:bg-lark-sunken"
+              ? "bg-tm-brand-light text-tm-brand"
+              : "hover:bg-tm-sunken"
           }`}
         >
-          <span className="text-lark-4 select-none w-8 shrink-0 text-right">
+          <span className="text-tm-4 select-none w-8 shrink-0 text-right">
             {lineNum}
           </span>
           <span className="leading-relaxed">{content}</span>

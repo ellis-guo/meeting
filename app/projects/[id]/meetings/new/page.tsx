@@ -2,9 +2,9 @@
 
 import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
-import Link from "next/link";
-import { ArrowLeft } from "lucide-react";
 import MeetingFlow from "@/app/components/MeetingFlow";
+import AppShell from "@/app/components/AppShell";
+import AppHeader from "@/app/components/AppHeader";
 
 export default function ProjectMeetingPage() {
   const params = useParams();
@@ -23,31 +23,29 @@ export default function ProjectMeetingPage() {
 
   if (loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-lark-canvas">
-        <p className="text-sm text-lark-3">加载中...</p>
-      </div>
+      <AppShell>
+        <div className="h-[60vh] flex items-center justify-center">
+          <p className="text-sm text-tm-3">加载中...</p>
+        </div>
+      </AppShell>
     );
   }
 
   return (
-    <div className="h-screen flex flex-col">
-      {/* 这一条是手写的顶栏，不走 AppHeader（所以也没有通知铃铛）。窄屏上项目名
-          可以很长，要能截断，否则会把「新建会议」挤出屏幕。 */}
-      <div className="px-4 sm:px-6 py-3.5 border-b border-lark-border bg-lark-surface shrink-0 print:hidden flex items-center gap-2 sm:gap-3">
-        <Link
-          href={`/projects/${id}`}
-          className="flex items-center gap-1.5 min-w-0 text-sm text-lark-2 hover:text-lark-1 transition-colors"
-          title={projectName || "项目"}
-        >
-          <ArrowLeft size={14} className="shrink-0" />
-          <span className="truncate">{projectName || "项目"}</span>
-        </Link>
-        <span className="text-lark-border shrink-0">|</span>
-        <span className="text-sm text-lark-2 shrink-0">新建会议</span>
+    <AppShell fullHeight>
+      <div className="h-full flex flex-col">
+        {/* 以前这里是手写的顶栏，没有通知铃铛。统一走 AppHeader 之后
+            移动端也才有汉堡可以打开抽屉。
+            面包屑里的项目名可以到 100 字，AppHeader 里已经 truncate 过了。 */}
+        <AppHeader
+          variant="app"
+          crumbs={[{ label: projectName || "项目", href: `/projects/${id}` }]}
+          title={<span className="text-sm font-medium text-tm-1 shrink-0">新建会议</span>}
+        />
+        <div className="flex-1 overflow-hidden">
+          <MeetingFlow projectId={id} />
+        </div>
       </div>
-      <div className="flex-1 overflow-hidden">
-        <MeetingFlow projectId={id} />
-      </div>
-    </div>
+    </AppShell>
   );
 }

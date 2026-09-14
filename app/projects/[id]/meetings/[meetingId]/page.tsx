@@ -5,6 +5,7 @@ import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { toast } from "sonner";
 import { Pencil, Printer, Trash2, X } from "lucide-react";
+import AppShell from "@/app/components/AppShell";
 import AppHeader from "@/app/components/AppHeader";
 import SummaryPanel from "@/app/components/SummaryPanel";
 import TranscriptPanel from "@/app/components/TranscriptPanel";
@@ -85,18 +86,22 @@ export default function MeetingDetailPage() {
 
   if (loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-lark-canvas">
-        <p className="text-sm text-lark-3">加载中...</p>
-      </div>
+      <AppShell>
+        <div className="h-[60vh] flex items-center justify-center">
+          <p className="text-sm text-tm-3">加载中...</p>
+        </div>
+      </AppShell>
     );
   }
 
   if (notFound || !summary || !numberedTranscript) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-lark-canvas flex-col gap-4">
-        <p className="text-sm text-lark-2">会议记录不存在</p>
-        <Link href={`/projects/${projectId}`} className="text-sm text-lark-blue hover:underline">返回项目</Link>
-      </div>
+      <AppShell>
+        <div className="h-[60vh] flex items-center justify-center flex-col gap-4">
+          <p className="text-sm text-tm-2">会议记录不存在</p>
+          <Link href={`/projects/${projectId}`} className="text-sm text-tm-brand hover:underline">返回项目</Link>
+        </div>
+      </AppShell>
     );
   }
 
@@ -107,19 +112,20 @@ export default function MeetingDetailPage() {
   const date = summary.meta.date ?? "—";
 
   return (
-    <div className="h-screen flex flex-col bg-lark-surface">
+    <AppShell fullHeight>
+      <div className="h-full flex flex-col bg-tm-surface">
       <AppHeader
         variant="app"
-        back={{ label: "返回项目", onClick: () => router.push(`/projects/${projectId}`) }}
-        title={<span className="text-sm text-lark-2">{date}</span>}
+        crumbs={[{ label: "项目", href: `/projects/${projectId}` }]}
+        title={<span className="text-sm font-medium text-tm-1 tabular-nums">{date}</span>}
         actions={
           <>
             <button
               onClick={() => { setIsEditing((v) => !v); setPopup(null); }}
               className={`flex items-center gap-1.5 px-2 sm:px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
                 isEditing
-                  ? "bg-lark-blue text-white"
-                  : "border border-lark-border text-lark-2 hover:bg-lark-sunken"
+                  ? "bg-tm-brand text-white"
+                  : "border border-tm-border text-tm-2 hover:bg-tm-sunken"
               }`}
             >
               <Pencil size={13} />
@@ -130,14 +136,14 @@ export default function MeetingDetailPage() {
               <button
                 onClick={handleSave}
                 disabled={saving}
-                className="px-2 sm:px-3 py-1.5 rounded-lg text-sm font-medium bg-lark-blue text-white hover:bg-lark-blue-hover disabled:opacity-50 transition-colors"
+                className="px-2 sm:px-3 py-1.5 rounded-lg text-sm font-medium bg-tm-brand text-white hover:bg-tm-brand-hover disabled:opacity-50 transition-colors"
               >
                 {saving ? "保存中..." : "保存"}
               </button>
             )}
             <button
               onClick={() => window.print()}
-              className="flex items-center gap-1.5 px-2 sm:px-3 py-1.5 rounded-lg text-sm font-medium border border-lark-border text-lark-2 hover:bg-lark-sunken transition-colors print:hidden"
+              className="flex items-center gap-1.5 px-2 sm:px-3 py-1.5 rounded-lg text-sm font-medium border border-tm-border text-tm-2 hover:bg-tm-sunken transition-colors print:hidden"
             >
               <Printer size={13} />
               <span className="hidden sm:inline">导出 PDF</span>
@@ -145,7 +151,7 @@ export default function MeetingDetailPage() {
             <button
               onClick={handleDelete}
               disabled={deleting}
-              className="flex items-center gap-1.5 px-2 sm:px-3 py-1.5 rounded-lg text-sm font-medium border border-lark-danger/30 text-lark-danger hover:bg-lark-danger/5 disabled:opacity-50 transition-colors"
+              className="flex items-center gap-1.5 px-2 sm:px-3 py-1.5 rounded-lg text-sm font-medium border border-tm-danger/30 text-tm-danger hover:bg-tm-danger/5 disabled:opacity-50 transition-colors"
             >
               <Trash2 size={13} />
               <span className="hidden sm:inline">{deleting ? "删除中..." : "删除"}</span>
@@ -164,7 +170,7 @@ export default function MeetingDetailPage() {
         {/* print:block 是给"手机上停在逐字稿那栏时去打印"兜底的——导出 PDF 永远只出
             摘要，不能因为当前切在另一栏就打印出一张空白页。 */}
         <div
-          className={`w-full md:w-1/2 overflow-y-auto md:border-r border-lark-border p-4 sm:p-6 print:w-full print:border-none print:p-8 print:block ${
+          className={`w-full md:w-1/2 overflow-y-auto md:border-r border-tm-border p-4 sm:p-6 print:w-full print:border-none print:p-8 print:block ${
             mobileTab === "summary" ? "" : "hidden md:block"
           }`}
         >
@@ -181,7 +187,7 @@ export default function MeetingDetailPage() {
             mobileTab === "transcript" ? "flex" : "hidden md:flex"
           }`}
         >
-          <div className="flex-1 overflow-y-auto p-4 sm:p-6 bg-lark-sunken">
+          <div className="flex-1 overflow-y-auto p-4 sm:p-6 bg-tm-sunken">
             <TranscriptPanel
               numberedTranscript={numberedTranscript}
               highlightedLines={highlightedLines}
@@ -194,18 +200,18 @@ export default function MeetingDetailPage() {
 
       {popup && !isEditing && (
         <div
-          className="fixed bg-lark-surface border border-lark-border rounded-xl p-4 z-50 min-w-44 max-w-[calc(100vw-1rem)] print:hidden"
+          className="fixed bg-tm-surface border border-tm-border rounded-xl p-4 z-50 min-w-44 max-w-[calc(100vw-1rem)] print:hidden"
           style={{
             // y 本来就有兜底，x 一直没有。375px 屏上只要点击位置靠右，
             // 176px 宽（min-w-44）的浮窗会整个溢出屏幕右边，根本看不到。
             left: Math.max(8, Math.min(popup.x, window.innerWidth - 184)),
             top: Math.min(popup.y, window.innerHeight - 220),
-            boxShadow: "var(--lark-shadow-modal)",
+            boxShadow: "var(--tm-shadow-modal)",
           }}
         >
           <div className="flex items-center justify-between mb-3">
-            <span className="text-xs font-semibold text-lark-3 uppercase tracking-wider">来源</span>
-            <button onClick={() => setPopup(null)} className="text-lark-3 hover:text-lark-1 transition-colors ml-4">
+            <span className="text-xs font-medium text-tm-3">来源</span>
+            <button onClick={() => setPopup(null)} className="text-tm-3 hover:text-tm-1 transition-colors ml-4">
               <X size={14} />
             </button>
           </div>
@@ -214,7 +220,7 @@ export default function MeetingDetailPage() {
               <button
                 key={lineNum}
                 onClick={() => handleLineClick(lineNum)}
-                className="text-left text-sm text-lark-blue hover:underline"
+                className="text-left text-sm text-tm-brand hover:underline"
               >
                 来源 {i + 1}（第 {lineNum} 行）
               </button>
@@ -222,6 +228,7 @@ export default function MeetingDetailPage() {
           </div>
         </div>
       )}
-    </div>
+      </div>
+    </AppShell>
   );
 }

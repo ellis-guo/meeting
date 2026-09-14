@@ -63,10 +63,10 @@ export default function MeetingFlow({ projectId }: Props) {
   };
 
   return (
-    <div className="min-h-full flex items-center justify-center bg-lark-canvas p-8">
+    <div className="min-h-full flex items-center justify-center bg-tm-canvas p-8">
       <div className="w-full max-w-2xl space-y-4">
         <textarea
-          className="w-full h-64 p-4 border border-lark-border rounded-xl text-sm text-lark-1 bg-lark-surface resize-none focus:outline-none focus:ring-2 focus:ring-lark-blue/40 placeholder:text-lark-4 shadow-card transition-colors"
+          className="w-full h-64 p-4 border border-tm-border rounded-xl text-sm text-tm-1 bg-tm-surface resize-none focus:outline-none focus:ring-2 focus:ring-tm-brand/40 placeholder:text-tm-4 shadow-card transition-colors"
           placeholder="粘贴会议记录..."
           value={transcript}
           onChange={(e) => setTranscript(e.target.value)}
@@ -80,8 +80,8 @@ export default function MeetingFlow({ projectId }: Props) {
               disabled={submitting}
               className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors disabled:opacity-50 ${
                 template === t
-                  ? "bg-lark-blue text-white"
-                  : "bg-lark-surface border border-lark-border text-lark-2 hover:bg-lark-sunken"
+                  ? "bg-tm-brand text-white"
+                  : "bg-tm-surface border border-tm-border text-tm-2 hover:bg-tm-sunken"
               }`}
             >
               {t === "smart" ? "智能模板" : "项目进度"}
@@ -89,26 +89,26 @@ export default function MeetingFlow({ projectId }: Props) {
           ))}
         </div>
         <div className="flex items-center gap-3">
-          <label className="text-sm text-lark-2 shrink-0">会议日期</label>
+          <label className="text-sm text-tm-2 shrink-0">会议日期</label>
           <input
             type="date"
             value={date}
             onChange={(e) => setDate(e.target.value)}
             required
             disabled={submitting}
-            className="flex-1 px-3 py-2 border border-lark-border rounded-lg text-sm text-lark-1 bg-lark-surface focus:outline-none focus:ring-2 focus:ring-lark-blue/40 transition-colors"
+            className="flex-1 px-3 py-2 border border-tm-border rounded-lg text-sm text-tm-1 bg-tm-surface focus:outline-none focus:ring-2 focus:ring-tm-brand/40 transition-colors"
           />
         </div>
-        {error && <p className="text-sm text-lark-danger">{error}</p>}
+        {error && <p className="text-sm text-tm-danger">{error}</p>}
         <button
           onClick={handleSubmit}
           disabled={!transcript.trim() || !date || submitting}
-          className="w-full py-2.5 bg-lark-blue text-white rounded-lg text-sm font-medium hover:bg-lark-blue-hover disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-2"
+          className="w-full py-2.5 bg-tm-brand text-white rounded-lg text-sm font-medium hover:bg-tm-brand-hover disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-2"
         >
           {submitting && <Loader2 size={14} className="animate-spin" />}
           {submitting ? "正在录入..." : "开始录入"}
         </button>
-        <p className="text-xs text-lark-4 text-center">
+        <p className="text-xs text-tm-4 text-center">
           交给我们就行，不用等在这页。整理好了会通知你。
         </p>
       </div>

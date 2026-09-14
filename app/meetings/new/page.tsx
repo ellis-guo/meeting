@@ -1,24 +1,21 @@
 import MeetingFlow from "@/app/components/MeetingFlow";
-import Link from "next/link";
-import { ArrowLeft } from "lucide-react";
+import AppShell from "@/app/components/AppShell";
+import AppHeader from "@/app/components/AppHeader";
 
 export default function StandaloneMeetingPage() {
   return (
-    <div className="h-screen flex flex-col">
-      <div className="px-6 py-3.5 border-b border-lark-border bg-lark-surface shrink-0 print:hidden flex items-center gap-3">
-        <Link
-          href="/"
-          className="flex items-center gap-1.5 text-sm text-lark-2 hover:text-lark-1 transition-colors"
-        >
-          <ArrowLeft size={14} />
-          首页
-        </Link>
-        <span className="text-lark-border">|</span>
-        <span className="text-sm text-lark-2">独立会议</span>
+    <AppShell fullHeight>
+      <div className="h-full flex flex-col">
+        {/* 以前这里是手写的顶栏，所以没有通知铃铛也没有移动端的汉堡。
+            加了侧边栏之后所有页面都得能打开抽屉，统一走 AppHeader。 */}
+        <AppHeader
+          variant="app"
+          title={<span className="text-sm font-medium text-tm-1">独立会议</span>}
+        />
+        <div className="flex-1 overflow-hidden">
+          <MeetingFlow />
+        </div>
       </div>
-      <div className="flex-1 overflow-hidden">
-        <MeetingFlow />
-      </div>
-    </div>
+    </AppShell>
   );
 }

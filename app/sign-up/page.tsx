@@ -73,17 +73,17 @@ export default function SignUpPage() {
   };
 
   return (
-    <div className="min-h-screen bg-lark-canvas flex flex-col items-center justify-center p-6">
+    <div className="min-h-screen bg-tm-canvas flex flex-col items-center justify-center p-6">
       <div className="w-full max-w-sm space-y-8">
         <div className="text-center space-y-1.5">
-          <h1 className="text-xl font-semibold text-lark-1">更好用的会议管理助手</h1>
-          <p className="text-sm text-lark-3">{needsVerification ? "验证邮箱" : "创建账号"}</p>
+          <h1 className="text-xl font-semibold text-tm-1">更好用的会议管理助手</h1>
+          <p className="text-sm text-tm-3">{needsVerification ? "验证邮箱" : "创建账号"}</p>
         </div>
 
         {!needsVerification ? (
-          <form onSubmit={handleSubmit} className="bg-lark-surface rounded-2xl border border-lark-border shadow-card p-8 space-y-4">
+          <form onSubmit={handleSubmit} className="bg-tm-surface rounded-2xl border border-tm-border shadow-card p-8 space-y-4">
             <div className="space-y-1.5">
-              <label className="text-xs font-medium text-lark-2">邮箱</label>
+              <label className="text-xs font-medium text-tm-2">邮箱</label>
               <input
                 type="email"
                 value={email}
@@ -92,15 +92,15 @@ export default function SignUpPage() {
                 required
                 autoFocus
                 disabled={busy}
-                className="w-full px-3.5 py-2.5 border border-lark-border rounded-lg text-sm bg-lark-sunken text-lark-1 placeholder:text-lark-4 focus:outline-none focus:ring-2 focus:ring-lark-blue/40 disabled:opacity-60 transition-colors"
+                className="w-full px-3.5 py-2.5 border border-tm-border rounded-lg text-sm bg-tm-sunken text-tm-1 placeholder:text-tm-4 focus:outline-none focus:ring-2 focus:ring-tm-brand/40 disabled:opacity-60 transition-colors"
               />
               {errors?.fields?.emailAddress && (
-                <p className="text-xs text-lark-danger">{errors.fields.emailAddress.message}</p>
+                <p className="text-xs text-tm-danger">{errors.fields.emailAddress.message}</p>
               )}
             </div>
 
             <div className="space-y-1.5">
-              <label className="text-xs font-medium text-lark-2">密码</label>
+              <label className="text-xs font-medium text-tm-2">密码</label>
               <input
                 type="password"
                 value={password}
@@ -109,19 +109,19 @@ export default function SignUpPage() {
                 required
                 minLength={8}
                 disabled={busy}
-                className="w-full px-3.5 py-2.5 border border-lark-border rounded-lg text-sm bg-lark-sunken text-lark-1 placeholder:text-lark-4 focus:outline-none focus:ring-2 focus:ring-lark-blue/40 disabled:opacity-60 transition-colors"
+                className="w-full px-3.5 py-2.5 border border-tm-border rounded-lg text-sm bg-tm-sunken text-tm-1 placeholder:text-tm-4 focus:outline-none focus:ring-2 focus:ring-tm-brand/40 disabled:opacity-60 transition-colors"
               />
               {errors?.fields?.password && (
-                <p className="text-xs text-lark-danger">{errors.fields.password.message}</p>
+                <p className="text-xs text-tm-danger">{errors.fields.password.message}</p>
               )}
             </div>
 
-            {formError && <p className="text-xs text-lark-danger">{formError}</p>}
+            {formError && <p className="text-xs text-tm-danger">{formError}</p>}
 
             <button
               type="submit"
               disabled={busy}
-              className="w-full py-2.5 bg-lark-blue text-white rounded-lg text-sm font-medium hover:bg-lark-blue-hover disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              className="w-full py-2.5 bg-tm-brand text-white rounded-lg text-sm font-medium hover:bg-tm-brand-hover disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
             >
               {busy ? "处理中..." : "注册"}
             </button>
@@ -129,13 +129,13 @@ export default function SignUpPage() {
             <div id="clerk-captcha" />
           </form>
         ) : (
-          <form onSubmit={handleVerify} className="bg-lark-surface rounded-2xl border border-lark-border shadow-card p-8 space-y-4">
-            <p className="text-sm text-lark-2">
-              验证码已发送至 <span className="font-medium text-lark-1">{email}</span>，请查收邮件。
+          <form onSubmit={handleVerify} className="bg-tm-surface rounded-2xl border border-tm-border shadow-card p-8 space-y-4">
+            <p className="text-sm text-tm-2">
+              验证码已发送至 <span className="font-medium text-tm-1">{email}</span>，请查收邮件。
             </p>
 
             <div className="space-y-1.5">
-              <label className="text-xs font-medium text-lark-2">验证码</label>
+              <label className="text-xs font-medium text-tm-2">验证码</label>
               <input
                 type="text"
                 inputMode="numeric"
@@ -146,19 +146,19 @@ export default function SignUpPage() {
                 autoFocus
                 maxLength={6}
                 disabled={busy}
-                className="w-full px-3.5 py-2.5 border border-lark-border rounded-lg text-sm bg-lark-sunken text-lark-1 placeholder:text-lark-4 focus:outline-none focus:ring-2 focus:ring-lark-blue/40 disabled:opacity-60 transition-colors tracking-widest text-center font-mono"
+                className="w-full px-3.5 py-2.5 border border-tm-border rounded-lg text-sm bg-tm-sunken text-tm-1 placeholder:text-tm-4 focus:outline-none focus:ring-2 focus:ring-tm-brand/40 disabled:opacity-60 transition-colors tracking-widest text-center font-mono"
               />
               {errors?.fields?.code && (
-                <p className="text-xs text-lark-danger">{errors.fields.code.message}</p>
+                <p className="text-xs text-tm-danger">{errors.fields.code.message}</p>
               )}
             </div>
 
-            {formError && <p className="text-xs text-lark-danger">{formError}</p>}
+            {formError && <p className="text-xs text-tm-danger">{formError}</p>}
 
             <button
               type="submit"
               disabled={busy || code.length < 6}
-              className="w-full py-2.5 bg-lark-blue text-white rounded-lg text-sm font-medium hover:bg-lark-blue-hover disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              className="w-full py-2.5 bg-tm-brand text-white rounded-lg text-sm font-medium hover:bg-tm-brand-hover disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
             >
               {busy ? "验证中..." : "验证并登录"}
             </button>
@@ -168,7 +168,7 @@ export default function SignUpPage() {
                 type="button"
                 onClick={resendCode}
                 disabled={busy}
-                className="text-lark-blue hover:underline disabled:opacity-50"
+                className="text-tm-brand hover:underline disabled:opacity-50"
               >
                 重新发送验证码
               </button>
@@ -176,7 +176,7 @@ export default function SignUpPage() {
                 type="button"
                 onClick={startOver}
                 disabled={busy}
-                className="text-lark-3 hover:text-lark-2 disabled:opacity-50"
+                className="text-tm-3 hover:text-tm-2 disabled:opacity-50"
               >
                 返回修改邮箱
               </button>
@@ -184,9 +184,9 @@ export default function SignUpPage() {
           </form>
         )}
 
-        <p className="text-center text-sm text-lark-3">
+        <p className="text-center text-sm text-tm-3">
           已有账号？{" "}
-          <Link href="/sign-in" className="text-lark-blue hover:underline">
+          <Link href="/sign-in" className="text-tm-brand hover:underline">
             登录
           </Link>
         </p>

@@ -1,53 +1,88 @@
 @import "tailwindcss";
 
-/* ─── Feishu (Lark) Design Tokens ─────────────────────────────── */
+/* ─── TDesign Tokens（腾讯会议同源设计体系）────────────────────
+ *
+ * 这套值取自 TDesign —— 腾讯会议自己用的设计系统，不是我调的近似色。
+ * 换掉之前那套飞书 token 的三个决定性差异：
+ *
+ *   1. 主色 #3370FF（飞书蓝，偏亮偏活泼）→ #0052D9（TDesign brand-7，更沉）
+ *   2. 文字用 rgba 而不是实色 —— 同一套值在任何底色上都能压出正确的层次，
+ *      深色模式只要换 rgba 的基色，不用重新配一遍灰阶
+ *   3. 圆角 12px → 6px，阴影退到只剩弹层用 —— 卡片靠 1px 描边分隔
+ *
+ * ⚠️ 圆角是在 @theme 里覆盖 Tailwind 的 --radius-* 实现的，不是逐个类名改的。
+ * 也就是说代码里写的还是 rounded-xl，但它现在等于 6px。别看到 rounded-xl
+ * 就以为是 12px。
+ */
 :root {
-  /* Neutral scale — from feishu.cn CSS variables */
-  --lark-canvas:        #F5F6F7;   /* page background */
-  --lark-surface:       #FFFFFF;   /* card / panel */
-  --lark-sunken:        #F2F3F5;   /* inner area (transcript, input bg) */
-  --lark-border:        #DEE0E3;   /* all borders */
-  --lark-text-1:        #1F2329;   /* primary text */
-  --lark-text-2:        #646A73;   /* secondary text */
-  --lark-text-3:        #8F959E;   /* tertiary / label */
-  --lark-text-4:        #BBBFC4;   /* placeholder / disabled */
-  /* Blue scale */
-  --lark-blue:          #3370FF;   /* primary action */
-  --lark-blue-hover:    #245BDB;   /* button hover */
-  --lark-blue-light:    #F0F4FF;   /* subtle blue bg */
-  --lark-blue-text:     #3370FF;   /* blue text */
-  /* Semantic */
-  --lark-danger:        #E03D30;
-  --lark-danger-hover:  #C52D21;
-  --lark-danger-light:  #FFF0EE;
-  --lark-success:       #10B981;
-  /* Shadows */
-  --lark-shadow-card:       0 1px 3px rgba(31, 35, 41, 0.08), 0 0 0 1px rgba(31, 35, 41, 0.05);
-  --lark-shadow-card-hover: 0 4px 12px rgba(31, 35, 41, 0.12), 0 0 0 1px rgba(51, 112, 255, 0.28);
-  --lark-shadow-modal:      0 8px 32px rgba(31, 35, 41, 0.14);
+  /* 背景层 */
+  --tm-canvas:        #F3F3F3;   /* 页面底（gray-1） */
+  --tm-surface:       #FFFFFF;   /* 卡片 / 面板 / 侧边栏 */
+  --tm-sunken:        #F3F3F3;   /* 白卡片内部的下沉区（输入框、逐字稿） */
+  --tm-hover:         #EEEEEE;   /* 中性 hover（gray-2） */
+
+  /* 描边 —— 分两级。这套设计里描边承担了原来阴影的活，所以要分得开 */
+  --tm-border:        #DCDCDC;   /* 主描边：卡片、输入框（gray-4） */
+  --tm-border-light:  #E7E7E7;   /* 次描边：列表分隔线、内部分区（gray-3） */
+
+  /* 文字 —— TDesign 用 rgba 叠在底色上，不是实色 */
+  --tm-text-1:        rgba(0, 0, 0, 0.90);   /* 正文 / 标题 */
+  --tm-text-2:        rgba(0, 0, 0, 0.60);   /* 次要信息 */
+  --tm-text-3:        rgba(0, 0, 0, 0.40);   /* 标签 / 弱提示 */
+  --tm-text-4:        rgba(0, 0, 0, 0.26);   /* placeholder / 禁用 */
+
+  /* 品牌色 */
+  --tm-brand:         #0052D9;   /* brand-7，主操作 */
+  --tm-brand-hover:   #366EF4;   /* brand-6 */
+  --tm-brand-active:  #003CAB;   /* brand-8 */
+  --tm-brand-light:   #F2F3FF;   /* brand-1，选中项底色 */
+  --tm-brand-focus:   #D9E1FF;   /* brand-2，focus ring */
+
+  /* 语义色 */
+  --tm-danger:        #D54941;
+  --tm-danger-hover:  #AD352F;
+  --tm-danger-light:  #FFF0ED;
+  --tm-success:       #2BA471;
+  --tm-warning:       #E37318;
+
+  /* 阴影 —— 只有浮层用。卡片一律 1px 描边，这是和飞书那套最大的观感差别 */
+  --tm-shadow-card:       none;
+  --tm-shadow-card-hover: 0 1px 4px rgba(0, 0, 0, 0.06);
+  --tm-shadow-modal:      0 8px 20px rgba(0, 0, 0, 0.12), 0 2px 6px rgba(0, 0, 0, 0.08);
+  --tm-shadow-popover:    0 4px 12px rgba(0, 0, 0, 0.10);
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --lark-canvas:        #0F1117;
-    --lark-surface:       #1A1D23;
-    --lark-sunken:        #13161C;
-    --lark-border:        #2A2D35;
-    --lark-text-1:        #E6EAF2;
-    --lark-text-2:        #8D95A3;
-    --lark-text-3:        #525B6A;
-    --lark-text-4:        #363C47;
-    --lark-blue:          #4D7EFF;
-    --lark-blue-hover:    #3D6FEF;
-    --lark-blue-light:    #1A2240;
-    --lark-blue-text:     #6698FF;
-    --lark-danger:        #F5483B;
-    --lark-danger-hover:  #E03D30;
-    --lark-danger-light:  #2D1210;
-    --lark-success:       #34D399;
-    --lark-shadow-card:       0 1px 3px rgba(0, 0, 0, 0.28);
-    --lark-shadow-card-hover: 0 4px 12px rgba(0, 0, 0, 0.40), 0 0 0 1px rgba(77, 126, 255, 0.3);
-    --lark-shadow-modal:      0 8px 32px rgba(0, 0, 0, 0.50);
+    --tm-canvas:        #181818;
+    --tm-surface:       #242424;
+    --tm-sunken:        #2C2C2C;
+    --tm-hover:         #383838;
+
+    --tm-border:        #484848;
+    --tm-border-light:  #383838;
+
+    --tm-text-1:        rgba(255, 255, 255, 0.90);
+    --tm-text-2:        rgba(255, 255, 255, 0.55);
+    --tm-text-3:        rgba(255, 255, 255, 0.35);
+    --tm-text-4:        rgba(255, 255, 255, 0.22);
+
+    --tm-brand:         #4582E6;
+    --tm-brand-hover:   #5C93EB;
+    --tm-brand-active:  #3671D4;
+    --tm-brand-light:   #1C2B4A;
+    --tm-brand-focus:   #2B4372;
+
+    --tm-danger:        #E04D46;
+    --tm-danger-hover:  #C8443E;
+    --tm-danger-light:  #3A1C1A;
+    --tm-success:       #43C18F;
+    --tm-warning:       #EC8B33;
+
+    --tm-shadow-card:       none;
+    --tm-shadow-card-hover: 0 1px 4px rgba(0, 0, 0, 0.40);
+    --tm-shadow-modal:      0 8px 20px rgba(0, 0, 0, 0.55), 0 2px 6px rgba(0, 0, 0, 0.40);
+    --tm-shadow-popover:    0 4px 12px rgba(0, 0, 0, 0.45);
   }
 }
 
@@ -55,32 +90,56 @@
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
 
-  --color-lark-canvas:        var(--lark-canvas);
-  --color-lark-surface:       var(--lark-surface);
-  --color-lark-sunken:        var(--lark-sunken);
-  --color-lark-border:        var(--lark-border);
-  --color-lark-1:             var(--lark-text-1);
-  --color-lark-2:             var(--lark-text-2);
-  --color-lark-3:             var(--lark-text-3);
-  --color-lark-4:             var(--lark-text-4);
-  --color-lark-blue:          var(--lark-blue);
-  --color-lark-blue-hover:    var(--lark-blue-hover);
-  --color-lark-blue-light:    var(--lark-blue-light);
-  --color-lark-blue-text:     var(--lark-blue-text);
-  --color-lark-danger:        var(--lark-danger);
-  --color-lark-danger-hover:  var(--lark-danger-hover);
-  --color-lark-danger-light:  var(--lark-danger-light);
-  --color-lark-success:       var(--lark-success);
+  --color-tm-canvas:        var(--tm-canvas);
+  --color-tm-surface:       var(--tm-surface);
+  --color-tm-sunken:        var(--tm-sunken);
+  --color-tm-hover:         var(--tm-hover);
+  --color-tm-border:        var(--tm-border);
+  --color-tm-border-light:  var(--tm-border-light);
+  --color-tm-1:             var(--tm-text-1);
+  --color-tm-2:             var(--tm-text-2);
+  --color-tm-3:             var(--tm-text-3);
+  --color-tm-4:             var(--tm-text-4);
+  --color-tm-brand:         var(--tm-brand);
+  --color-tm-brand-hover:   var(--tm-brand-hover);
+  --color-tm-brand-active:  var(--tm-brand-active);
+  --color-tm-brand-light:   var(--tm-brand-light);
+  --color-tm-brand-focus:   var(--tm-brand-focus);
+  --color-tm-danger:        var(--tm-danger);
+  --color-tm-danger-hover:  var(--tm-danger-hover);
+  --color-tm-danger-light:  var(--tm-danger-light);
+  --color-tm-success:       var(--tm-success);
+  --color-tm-warning:       var(--tm-warning);
 
-  --shadow-card:       var(--lark-shadow-card);
-  --shadow-card-hover: var(--lark-shadow-card-hover);
-  --shadow-modal:      var(--lark-shadow-modal);
+  --shadow-card:       var(--tm-shadow-card);
+  --shadow-card-hover: var(--tm-shadow-card-hover);
+  --shadow-modal:      var(--tm-shadow-modal);
+  --shadow-popover:    var(--tm-shadow-popover);
+
+  /* TDesign 的圆角阶梯。覆盖 Tailwind 默认值，全站一次性收紧 —— 这是
+     「商务」和「消费级」在观感上分得最开的一个维度。 */
+  --radius-sm:   2px;
+  --radius-md:   3px;
+  --radius-lg:   6px;
+  --radius-xl:   6px;
+  --radius-2xl:  9px;
+  --radius-3xl:  12px;
 }
 
 body {
-  background: var(--lark-canvas);
-  color: var(--lark-text-1);
-  font-family: var(--font-geist-sans), Arial, Helvetica, sans-serif;
+  background: var(--tm-canvas);
+  color: var(--tm-text-1);
+  font-family: var(--font-geist-sans), "PingFang SC", "Microsoft YaHei", Arial, sans-serif;
+  /* 中文界面在 400 字重下偏灰，TDesign 的正文实际观感更接近这个 */
+  -webkit-font-smoothing: antialiased;
+}
+
+/* 滚动条：默认的 Windows 滚动条在浅灰底上又宽又突兀，和这套克制的配色打架 */
+@media (pointer: fine) {
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--tm-border) transparent;
+  }
 }
 
 @media print {

@@ -19,8 +19,8 @@ function renderInline(text: string, resolve?: CitationResolver): React.ReactNode
     if (m) {
       const href = resolve?.(m[1].trim(), m[2].trim()) ?? null;
       return href
-        ? <a key={i} href={href} target="_blank" rel="noopener noreferrer" className="underline decoration-lark-border text-lark-3 hover:text-lark-blue transition-colors text-xs">{part}</a>
-        : <span key={i} className="text-lark-4 text-xs">{part}</span>;
+        ? <a key={i} href={href} target="_blank" rel="noopener noreferrer" className="underline decoration-tm-border text-tm-3 hover:text-tm-brand transition-colors text-xs">{part}</a>
+        : <span key={i} className="text-tm-4 text-xs">{part}</span>;
     }
     return part;
   });
@@ -46,9 +46,9 @@ export default function AskMarkdown({ text, resolve }: { text: string; resolve?:
         const h2 = line.match(/^##\s+(.+)/);
         const h3 = line.match(/^###\s+(.+)/);
         const bullet = line.match(/^[*•]\s+(.+)/);
-        if (h2) return <p key={i} className="text-base font-semibold text-lark-1 mt-4 mb-0.5">{renderInline(h2[1], resolve)}</p>;
-        if (h3) return <p key={i} className="font-medium text-lark-1 mt-3 mb-0.5">{renderInline(h3[1], resolve)}</p>;
-        if (bullet) return <p key={i} className="flex gap-2 pl-2"><span className="shrink-0 text-lark-3">•</span><span>{renderInline(bullet[1], resolve)}</span></p>;
+        if (h2) return <p key={i} className="text-base font-semibold text-tm-1 mt-4 mb-0.5">{renderInline(h2[1], resolve)}</p>;
+        if (h3) return <p key={i} className="font-medium text-tm-1 mt-3 mb-0.5">{renderInline(h3[1], resolve)}</p>;
+        if (bullet) return <p key={i} className="flex gap-2 pl-2"><span className="shrink-0 text-tm-3">•</span><span>{renderInline(bullet[1], resolve)}</span></p>;
         if (line === "") return <br key={i} />;
         return <Fragment key={i}>{renderInline(line, resolve)}<br /></Fragment>;
       })}

@@ -31,10 +31,10 @@ export default function AskMessages<S>({ messages, className = "", resolve, extr
             <div
               className={`max-w-[85%] rounded-2xl px-4 py-2.5 text-sm ${
                 m.role === "user"
-                  ? "bg-lark-blue text-white rounded-br-sm"
+                  ? "bg-tm-brand text-white rounded-br-sm"
                   : m.error
-                    ? "bg-lark-danger/5 border border-lark-danger/30 text-lark-danger rounded-bl-sm"
-                    : "bg-lark-sunken text-lark-1 rounded-bl-sm"
+                    ? "bg-tm-danger/5 border border-tm-danger/30 text-tm-danger rounded-bl-sm"
+                    : "bg-tm-sunken text-tm-1 rounded-bl-sm"
               }`}
             >
               {m.role === "user" ? (
@@ -47,7 +47,7 @@ export default function AskMessages<S>({ messages, className = "", resolve, extr
                     {m.text ? (
                       <AskMarkdown text={m.text} resolve={resolve?.(m)} />
                     ) : (
-                      <span className="text-lark-3">思考中...</span>
+                      <span className="text-tm-3">思考中...</span>
                     )}
                   </div>
                   {extras?.(m, prevUser)}

@@ -136,16 +136,16 @@ export default function SignInPage() {
   };
 
   const inputClass =
-    "w-full px-3.5 py-2.5 border border-lark-border rounded-lg text-sm bg-lark-sunken text-lark-1 placeholder:text-lark-4 focus:outline-none focus:ring-2 focus:ring-lark-blue/40 disabled:opacity-60 transition-colors";
+    "w-full px-3.5 py-2.5 border border-tm-border rounded-lg text-sm bg-tm-sunken text-tm-1 placeholder:text-tm-4 focus:outline-none focus:ring-2 focus:ring-tm-brand/40 disabled:opacity-60 transition-colors";
   const submitClass =
-    "w-full py-2.5 bg-lark-blue text-white rounded-lg text-sm font-medium hover:bg-lark-blue-hover disabled:opacity-50 disabled:cursor-not-allowed transition-colors";
+    "w-full py-2.5 bg-tm-brand text-white rounded-lg text-sm font-medium hover:bg-tm-brand-hover disabled:opacity-50 disabled:cursor-not-allowed transition-colors";
 
   return (
-    <div className="min-h-screen bg-lark-canvas flex flex-col items-center justify-center p-6">
+    <div className="min-h-screen bg-tm-canvas flex flex-col items-center justify-center p-6">
       <div className="w-full max-w-sm space-y-8">
         <div className="text-center space-y-1.5">
-          <h1 className="text-xl font-semibold text-lark-1">更好用的会议管理助手</h1>
-          <p className="text-sm text-lark-3">
+          <h1 className="text-xl font-semibold text-tm-1">更好用的会议管理助手</h1>
+          <p className="text-sm text-tm-3">
             {factor ? FACTOR_UI[factor].hint : "登录以继续"}
           </p>
         </div>
@@ -153,10 +153,10 @@ export default function SignInPage() {
         {factor ? (
           <form
             onSubmit={handleVerify}
-            className="bg-lark-surface rounded-2xl border border-lark-border shadow-card p-8 space-y-4"
+            className="bg-tm-surface rounded-2xl border border-tm-border shadow-card p-8 space-y-4"
           >
             <div className="space-y-1.5">
-              <label className="text-xs font-medium text-lark-2">{FACTOR_UI[factor].title}</label>
+              <label className="text-xs font-medium text-tm-2">{FACTOR_UI[factor].title}</label>
               <input
                 type="text"
                 inputMode={factor === "backup_code" ? "text" : "numeric"}
@@ -170,11 +170,11 @@ export default function SignInPage() {
                 className={inputClass}
               />
               {errors?.fields?.code && (
-                <p className="text-xs text-lark-danger">{errors.fields.code.message}</p>
+                <p className="text-xs text-tm-danger">{errors.fields.code.message}</p>
               )}
             </div>
 
-            {formError && <p className="text-xs text-lark-danger">{formError}</p>}
+            {formError && <p className="text-xs text-tm-danger">{formError}</p>}
 
             <button type="submit" disabled={busy} className={submitClass}>
               {busy ? "验证中..." : "验证并登录"}
@@ -184,7 +184,7 @@ export default function SignInPage() {
               <button
                 type="button"
                 onClick={backToPassword}
-                className="text-lark-3 hover:text-lark-1 transition-colors"
+                className="text-tm-3 hover:text-tm-1 transition-colors"
               >
                 返回
               </button>
@@ -193,7 +193,7 @@ export default function SignInPage() {
                   type="button"
                   onClick={resend}
                   disabled={busy}
-                  className="text-lark-blue hover:underline disabled:opacity-50"
+                  className="text-tm-brand hover:underline disabled:opacity-50"
                 >
                   重新发送
                 </button>
@@ -203,10 +203,10 @@ export default function SignInPage() {
         ) : (
           <form
             onSubmit={handleSubmit}
-            className="bg-lark-surface rounded-2xl border border-lark-border shadow-card p-8 space-y-4"
+            className="bg-tm-surface rounded-2xl border border-tm-border shadow-card p-8 space-y-4"
           >
             <div className="space-y-1.5">
-              <label className="text-xs font-medium text-lark-2">邮箱</label>
+              <label className="text-xs font-medium text-tm-2">邮箱</label>
               <input
                 type="email"
                 value={email}
@@ -218,12 +218,12 @@ export default function SignInPage() {
                 className={inputClass}
               />
               {errors?.fields?.identifier && (
-                <p className="text-xs text-lark-danger">{errors.fields.identifier.message}</p>
+                <p className="text-xs text-tm-danger">{errors.fields.identifier.message}</p>
               )}
             </div>
 
             <div className="space-y-1.5">
-              <label className="text-xs font-medium text-lark-2">密码</label>
+              <label className="text-xs font-medium text-tm-2">密码</label>
               <input
                 type="password"
                 value={password}
@@ -234,7 +234,7 @@ export default function SignInPage() {
                 className={inputClass}
               />
               {errors?.fields?.password && (
-                <p className="text-xs text-lark-danger">{errors.fields.password.message}</p>
+                <p className="text-xs text-tm-danger">{errors.fields.password.message}</p>
               )}
             </div>
 
@@ -242,7 +242,7 @@ export default function SignInPage() {
                 否则可能卡在 needs_client_trust。没开防护时它不渲染任何东西。 */}
             <div id="clerk-captcha" />
 
-            {formError && <p className="text-xs text-lark-danger">{formError}</p>}
+            {formError && <p className="text-xs text-tm-danger">{formError}</p>}
 
             <button type="submit" disabled={busy} className={submitClass}>
               {busy ? "登录中..." : "登录"}
@@ -251,9 +251,9 @@ export default function SignInPage() {
         )}
 
         {!factor && (
-          <p className="text-center text-sm text-lark-3">
+          <p className="text-center text-sm text-tm-3">
             还没有账号？{" "}
-            <Link href="/sign-up" className="text-lark-blue hover:underline">
+            <Link href="/sign-up" className="text-tm-brand hover:underline">
               注册
             </Link>
           </p>

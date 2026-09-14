@@ -55,17 +55,17 @@ export function ConfirmProvider({ children }: { children: ReactNode }) {
           <div
             role="alertdialog"
             aria-modal="true"
-            className="bg-lark-surface rounded-xl p-6 max-w-sm w-full mx-4"
-            style={{ boxShadow: "var(--lark-shadow-modal)" }}
+            className="bg-tm-surface rounded-xl p-6 max-w-sm w-full mx-4"
+            style={{ boxShadow: "var(--tm-shadow-modal)" }}
           >
-            <h2 className="text-sm font-semibold text-lark-1 mb-2">{options.title}</h2>
+            <h2 className="text-sm font-semibold text-tm-1 mb-2">{options.title}</h2>
             {options.description && (
-              <p className="text-sm text-lark-2 mb-5 leading-relaxed">{options.description}</p>
+              <p className="text-sm text-tm-2 mb-5 leading-relaxed">{options.description}</p>
             )}
             <div className={`flex gap-3 justify-end ${options.description ? "" : "mt-5"}`}>
               <button
                 onClick={() => close(false)}
-                className="px-4 py-2 text-sm text-lark-2 hover:text-lark-1 transition-colors"
+                className="px-4 py-2 text-sm text-tm-2 hover:text-tm-1 transition-colors"
               >
                 {options.cancelLabel ?? "取消"}
               </button>
@@ -74,8 +74,8 @@ export function ConfirmProvider({ children }: { children: ReactNode }) {
                 onClick={() => close(true)}
                 className={`px-4 py-2 text-sm font-medium text-white rounded-lg transition-colors ${
                   options.danger
-                    ? "bg-lark-danger hover:opacity-90"
-                    : "bg-lark-blue hover:bg-lark-blue-hover"
+                    ? "bg-tm-danger hover:opacity-90"
+                    : "bg-tm-brand hover:bg-tm-brand-hover"
                 }`}
               >
                 {options.confirmLabel ?? "确认"}

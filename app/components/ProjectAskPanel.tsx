@@ -37,13 +37,15 @@ export default function ProjectAskPanel({ projectId }: { projectId: string }) {
   });
 
   return (
-    <section className="space-y-3">
-      <div className="flex items-center justify-between">
-        <h2 className="text-xs font-semibold text-lark-3 uppercase tracking-wider">项目问答</h2>
+    // 区块头放进卡片里，和「会议」「文件」两块保持同一种结构——
+    // 三块并排时标题在卡内还是卡外这点不一致，比配色不一致还显眼。
+    <section className="rounded-lg border border-tm-border bg-tm-surface overflow-hidden">
+      <div className="flex items-center justify-between gap-2 px-4 h-12 border-b border-tm-border-light">
+        <h2 className="text-sm font-medium text-tm-1">项目问答</h2>
         {ask.messages.length > 0 && (
           <button
             onClick={() => ask.setCollapsed((v) => !v)}
-            className="flex items-center gap-1 text-xs text-lark-3 hover:text-lark-1 transition-colors"
+            className="flex items-center gap-1 text-xs text-tm-3 hover:text-tm-1 transition-colors"
             title={ask.collapsed ? "展开历史" : "收起历史"}
           >
             {ask.collapsed ? (
@@ -60,11 +62,11 @@ export default function ProjectAskPanel({ projectId }: { projectId: string }) {
           </button>
         )}
       </div>
-      <div className="rounded-xl border border-lark-border bg-lark-surface shadow-card overflow-hidden">
+      <>
         {ask.messages.length > 0 && !ask.collapsed && (
           <AskMessages
             messages={ask.messages}
-            className="px-4 py-4 max-h-[36rem] border-b border-lark-border"
+            className="px-4 py-4 max-h-[36rem] border-b border-tm-border"
             resolve={(m) => (head, section) => {
               // 参考文件：`[参考文件 · 文件名 › 章节]`，没有日期，靠标题对上来源
               if (head === "参考文件") {
@@ -101,10 +103,10 @@ export default function ProjectAskPanel({ projectId }: { projectId: string }) {
             }}
             extras={(m, prevUser) =>
               !m.isStreaming && m.debug ? (
-                <div className="mt-2 pt-2 border-t border-lark-border flex justify-end">
+                <div className="mt-2 pt-2 border-t border-tm-border flex justify-end">
                   <button
                     onClick={() => downloadDebug(m, prevUser)}
-                    className="flex items-center gap-1 text-[11px] text-lark-3 hover:text-lark-2 transition-colors"
+                    className="flex items-center gap-1 text-[11px] text-tm-3 hover:text-tm-2 transition-colors"
                   >
                     <Download size={11} />
                     下载 Debug
@@ -128,7 +130,7 @@ export default function ProjectAskPanel({ projectId }: { projectId: string }) {
             <div className="flex justify-end">
               <button
                 onClick={() => void ask.clear()}
-                className="flex items-center gap-1 text-xs text-lark-3 hover:text-lark-danger transition-colors"
+                className="flex items-center gap-1 text-xs text-tm-3 hover:text-tm-danger transition-colors"
               >
                 <Trash2 size={11} />
                 清空对话
@@ -136,7 +138,7 @@ export default function ProjectAskPanel({ projectId }: { projectId: string }) {
             </div>
           )}
         </div>
-      </div>
+      </>
     </section>
   );
 }

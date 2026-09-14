@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useSearchParams } from "next/navigation";
 import { AlertCircle, Download } from "lucide-react";
 import Link from "next/link";
+import AppShell from "@/app/components/AppShell";
 import AppHeader from "@/app/components/AppHeader";
 
 type DocDetail = {
@@ -67,35 +68,35 @@ export default function ReferenceDocPage() {
 
   if (error) {
     return (
-      <div className="min-h-screen bg-lark-canvas">
-        <AppHeader wide back={{ href: `/projects/${id}`, label: "返回项目" }} title="参考文件" />
+      <AppShell>
+        <AppHeader wide crumbs={[{ label: "项目", href: `/projects/${id}` }]} title="参考文件" />
         <main className="max-w-3xl mx-auto px-4 sm:px-8 py-16 text-center">
-          <p className="text-sm text-lark-3">{error}</p>
+          <p className="text-sm text-tm-3">{error}</p>
         </main>
-      </div>
+      </AppShell>
     );
   }
 
   if (!doc) {
     return (
-      <div className="min-h-screen bg-lark-canvas">
-        <AppHeader wide back={{ href: `/projects/${id}`, label: "返回项目" }} title="参考文件" />
+      <AppShell>
+        <AppHeader wide crumbs={[{ label: "项目", href: `/projects/${id}` }]} title="参考文件" />
         <main className="max-w-3xl mx-auto px-4 sm:px-8 py-16 text-center">
-          <p className="text-sm text-lark-3">加载中...</p>
+          <p className="text-sm text-tm-3">加载中...</p>
         </main>
-      </div>
+      </AppShell>
     );
   }
 
   return (
-    <div className="min-h-screen bg-lark-canvas">
+    <AppShell>
       <AppHeader
         wide
-        back={{ href: `/projects/${id}`, label: "返回项目" }}
+        crumbs={[{ label: "项目", href: `/projects/${id}` }]}
         title={
           <span className="flex items-baseline gap-2 min-w-0">
-            <span className="text-sm font-semibold text-lark-1 truncate">{doc.name}</span>
-            <span className="text-xs text-lark-3 shrink-0">
+            <span className="text-sm font-semibold text-tm-1 truncate">{doc.name}</span>
+            <span className="text-xs text-tm-3 shrink-0">
               {doc.status === "ready" ? `已入库 · ${doc.chunk_count} 段` : doc.status}
             </span>
           </span>
@@ -103,7 +104,7 @@ export default function ReferenceDocPage() {
         actions={
           <a
             href={`/api/projects/${id}/reference-docs/${docId}?download=1`}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium border border-lark-border text-lark-2 hover:bg-lark-sunken transition-colors"
+            className="flex items-center gap-1.5 px-3 h-8 rounded-md text-sm border border-tm-border text-tm-2 hover:bg-tm-hover hover:text-tm-1 transition-colors"
           >
             <Download size={13} />
             下载原件
@@ -113,23 +114,23 @@ export default function ReferenceDocPage() {
 
       <main className="max-w-3xl mx-auto px-4 sm:px-8 py-8 space-y-4">
         {doc.status === "failed" && (
-          <div className="rounded-xl border border-lark-danger/30 bg-lark-danger-light px-4 py-3 flex items-start gap-3">
-            <AlertCircle size={16} className="text-lark-danger shrink-0 mt-0.5" />
+          <div className="rounded-xl border border-tm-danger/30 bg-tm-danger-light px-4 py-3 flex items-start gap-3">
+            <AlertCircle size={16} className="text-tm-danger shrink-0 mt-0.5" />
             <div className="min-w-0">
-              <p className="text-sm font-medium text-lark-1">这份文件没能解析</p>
-              <p className="text-xs text-lark-2 mt-0.5">{doc.last_error ?? "原因未知"}</p>
+              <p className="text-sm font-medium text-tm-1">这份文件没能解析</p>
+              <p className="text-xs text-tm-2 mt-0.5">{doc.last_error ?? "原因未知"}</p>
             </div>
           </div>
         )}
 
         {hlStart > 0 && (
-          <div className="flex items-center justify-between gap-3 rounded-lg border border-lark-blue/30 bg-lark-blue-light/40 px-4 py-2.5">
-            <p className="text-xs text-lark-2">
+          <div className="flex items-center justify-between gap-3 rounded-lg border border-tm-brand/30 bg-tm-brand-light/40 px-4 py-2.5">
+            <p className="text-xs text-tm-2">
               高亮的是问答引用到的第 {hlStart}–{hlEnd} 行
             </p>
             <Link
               href={`/projects/${id}/reference-docs/${docId}`}
-              className="text-xs text-lark-blue hover:underline shrink-0"
+              className="text-xs text-tm-brand hover:underline shrink-0"
             >
               显示全文
             </Link>
@@ -137,14 +138,14 @@ export default function ReferenceDocPage() {
         )}
 
         {lines.length === 0 ? (
-          <div className="rounded-xl border border-dashed border-lark-border p-8 text-center">
-            <p className="text-sm text-lark-3">
+          <div className="rounded-xl border border-dashed border-tm-border p-8 text-center">
+            <p className="text-sm text-tm-3">
               {doc.status === "ready" ? "这份文件没有可显示的正文" : "还没有解析完"}
             </p>
           </div>
         ) : (
-          <div className="rounded-xl border border-lark-border bg-lark-surface shadow-card overflow-hidden">
-            <div className="divide-y divide-lark-border/40">
+          <div className="rounded-xl border border-tm-border bg-tm-surface shadow-card overflow-hidden">
+            <div className="divide-y divide-tm-border/40">
               {lines.map((line, i) => {
                 const no = i + 1;
                 const hit = hlStart > 0 && no >= hlStart && no <= hlEnd;
@@ -154,14 +155,14 @@ export default function ReferenceDocPage() {
                     key={no}
                     // 高亮区间的第一行挂 ref，进页面时滚到它
                     ref={hit && no === hlStart ? anchorRef : undefined}
-                    className={`flex gap-3 px-4 py-1.5 ${hit ? "bg-lark-blue-light/60" : ""}`}
+                    className={`flex gap-3 px-4 py-1.5 ${hit ? "bg-tm-brand-light/60" : ""}`}
                   >
-                    <span className="w-10 shrink-0 text-right text-xs text-lark-4 select-none tabular-nums pt-0.5">
+                    <span className="w-10 shrink-0 text-right text-xs text-tm-4 select-none tabular-nums pt-0.5">
                       {no}
                     </span>
                     {heading ? (
                       <span
-                        className={`min-w-0 break-words text-lark-1 ${
+                        className={`min-w-0 break-words text-tm-1 ${
                           heading[1].length === 1
                             ? "text-base font-semibold"
                             : heading[1].length === 2
@@ -172,7 +173,7 @@ export default function ReferenceDocPage() {
                         {heading[2]}
                       </span>
                     ) : (
-                      <span className="min-w-0 break-words text-sm text-lark-2 whitespace-pre-wrap">
+                      <span className="min-w-0 break-words text-sm text-tm-2 whitespace-pre-wrap">
                         {line}
                       </span>
                     )}
@@ -183,10 +184,10 @@ export default function ReferenceDocPage() {
           </div>
         )}
 
-        <p className="text-xs text-lark-4">
+        <p className="text-xs text-tm-4">
           这里显示的是从原件里抽取的纯文本，格式和排版有损失。需要原样的内容请下载原件。
         </p>
       </main>
-    </div>
+    </AppShell>
   );
 }

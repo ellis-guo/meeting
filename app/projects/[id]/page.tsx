@@ -4,12 +4,16 @@ import { useEffect, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { toast } from "sonner";
-import { ChevronRight, Plus, RefreshCw, Trash2 } from "lucide-react";
+import { ChevronRight, RefreshCw, Trash2 } from "lucide-react";
 import { Project } from "@/app/types";
+import AppShell from "@/app/components/AppShell";
 import AppHeader from "@/app/components/AppHeader";
 import ProjectAskPanel from "@/app/components/ProjectAskPanel";
 import ReferenceDocsPanel from "@/app/components/ReferenceDocsPanel";
+import SourceEntries from "@/app/components/SourceEntries";
 import { useConfirm } from "@/lib/ConfirmContext";
+import { ACCEPT, useReferenceDocs } from "@/lib/useReferenceDocs";
+import { patchName, removeLocal, refresh as refreshProjects } from "@/lib/projectsStore";
 
 type MeetingCardData = {
   id: string;
@@ -23,14 +27,14 @@ function StatusBadge({ meeting }: { meeting: MeetingCardData }) {
 
   if (status === "processing" || status === "pending") {
     return (
-      <span className="text-[10px] px-2 py-0.5 rounded-full bg-lark-blue-light text-lark-blue font-medium">
+      <span className="text-[10px] px-1.5 py-0.5 rounded bg-tm-brand-light text-tm-brand font-medium shrink-0">
         处理中
       </span>
     );
   }
   if (status === "failed") {
     return (
-      <span className="text-[10px] px-2 py-0.5 rounded-full bg-lark-danger/10 text-lark-danger font-medium">
+      <span className="text-[10px] px-1.5 py-0.5 rounded bg-tm-danger-light text-tm-danger font-medium shrink-0">
         生成失败
       </span>
     );
@@ -38,25 +42,31 @@ function StatusBadge({ meeting }: { meeting: MeetingCardData }) {
   return null;
 }
 
-function MeetingCard({ meeting, projectId }: { meeting: MeetingCardData; projectId: string }) {
+/**
+ * 会议的一行。
+ *
+ * PRD 4.3 要的是「日期 + AI 生成的标题 + 线上/线下 tag」，但 Meeting 表还没有
+ * 标题字段，也没有线上线下这个维度（P5 的剩余项）。这里只渲染真实存在的
+ * 日期和参会人——编一个占位标题出来，用户分不出那是"还没做"还是"模型没提取到"。
+ */
+function MeetingRow({ meeting, projectId }: { meeting: MeetingCardData; projectId: string }) {
   const { meta } = meeting.summary;
   const date = meta.date ?? new Date(meeting.created_at).toLocaleDateString("zh-CN");
   const participants = meta.participants.length > 0 ? meta.participants.join("、") : "—";
 
   return (
-    <Link
-      href={`/projects/${projectId}/meetings/${meeting.id}`}
-      className="flex items-center justify-between px-5 py-4 rounded-xl border border-lark-border bg-lark-surface shadow-card hover:shadow-card-hover transition-all"
-    >
-      <div className="space-y-0.5 min-w-0 flex-1">
-        <div className="flex items-center gap-2">
-          <span className="text-sm font-medium text-lark-1">{date}</span>
-          <StatusBadge meeting={meeting} />
-        </div>
-        <div className="text-xs text-lark-3 truncate">{participants}</div>
-      </div>
-      <ChevronRight size={15} className="text-lark-4 shrink-0" />
-    </Link>
+    <li>
+      <Link
+        href={`/projects/${projectId}/meetings/${meeting.id}`}
+        aria-label={`${date} 的会议记录`}
+        className="flex items-center gap-3 px-4 py-3 hover:bg-tm-sunken transition-colors"
+      >
+        <span className="text-sm text-tm-1 tabular-nums shrink-0 w-24">{date}</span>
+        <StatusBadge meeting={meeting} />
+        <span className="text-sm text-tm-3 truncate flex-1 min-w-0">{participants}</span>
+        <ChevronRight size={15} className="text-tm-4 shrink-0" />
+      </Link>
+    </li>
   );
 }
 
@@ -75,6 +85,8 @@ export default function ProjectDetailPage() {
   const [nameDraft, setNameDraft] = useState("");
   const [savingName, setSavingName] = useState(false);
   const nameInputRef = useRef<HTMLInputElement>(null);
+
+  const refDocs = useReferenceDocs(id);
 
   useEffect(() => {
     if (editingName) nameInputRef.current?.select();
@@ -103,6 +115,8 @@ export default function ProjectDetailPage() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "重命名失败");
       setProject((p) => (p ? { ...p, name: newName } : p));
+      // 侧边栏读的是共享 store，不同步的话它会一直挂着旧名字直到下次整页刷新
+      patchName(id, newName);
       setEditingName(false);
       toast.success("项目已重命名");
     } catch (e) {
@@ -132,7 +146,7 @@ export default function ProjectDetailPage() {
   const handleDeleteProject = async () => {
     const ok = await confirm({
       title: `确认删除项目「${project?.name}」？`,
-      description: "项目下所有会议记录也将一并删除，此操作不可撤销。",
+      description: "项目下所有会议记录和文件也将一并删除，此操作不可撤销。",
       confirmLabel: "删除项目",
       danger: true,
     });
@@ -140,6 +154,7 @@ export default function ProjectDetailPage() {
     setDeleting(true);
     try {
       await fetch(`/api/projects/${id}`, { method: "DELETE" });
+      removeLocal(id);
       toast.success("项目已删除");
       router.push("/");
     } finally {
@@ -162,29 +177,35 @@ export default function ProjectDetailPage() {
       .finally(() => setLoading(false));
   }, [id]);
 
+  // 直接用 URL 进到一个新项目时，侧边栏的列表可能还没有它。
+  useEffect(() => { void refreshProjects(); }, [id]);
+
   if (loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-lark-canvas">
-        <p className="text-sm text-lark-3">加载中...</p>
-      </div>
+      <AppShell>
+        <div className="h-[60vh] flex items-center justify-center">
+          <p className="text-sm text-tm-3">加载中...</p>
+        </div>
+      </AppShell>
     );
   }
 
   if (notFound || !project) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-lark-canvas flex-col gap-4">
-        <p className="text-sm text-lark-2">项目不存在</p>
-        <Link href="/" className="text-sm text-lark-blue hover:underline">返回首页</Link>
-      </div>
+      <AppShell>
+        <div className="h-[60vh] flex items-center justify-center flex-col gap-4">
+          <p className="text-sm text-tm-2">项目不存在</p>
+          <Link href="/" className="text-sm text-tm-brand hover:underline">返回工作台</Link>
+        </div>
+      </AppShell>
     );
   }
 
-
   return (
-    <div className="min-h-screen bg-lark-canvas">
+    <AppShell>
       <AppHeader
         wide
-        back={{ label: "首页", href: "/" }}
+        crumbs={[{ label: "项目" }]}
         title={
           editingName ? (
             <input
@@ -199,16 +220,16 @@ export default function ProjectDetailPage() {
               autoFocus
               disabled={savingName}
               maxLength={100}
-              className="text-sm font-semibold text-lark-1 bg-lark-sunken border border-lark-blue/40 rounded-md px-2 py-0.5 focus:outline-none focus:ring-2 focus:ring-lark-blue/40 w-full min-w-0 sm:w-auto sm:min-w-[120px]"
+              className="text-sm font-semibold text-tm-1 bg-tm-surface border border-tm-brand rounded-md px-2 py-1 focus:outline-none focus:ring-2 focus:ring-tm-brand-focus w-full min-w-0 sm:w-auto sm:min-w-[160px]"
               // 内联 ref 每次渲染身份都变，React 会重新挂载 ref；如果在这里调 select()，
               // 每敲一个字都会全选一次，下一个字直接把前面覆盖掉。改成挂载时选一次。
               ref={nameInputRef}
             />
           ) : (
             // truncate 少不了：项目名可以到 100 字，不截断的话它会在窄屏上换行撑高
-            // 顶栏，并且和左边的返回链接叠在一起——手机上实测就是这个样子。
+            // 顶栏，并且和左边的面包屑叠在一起——手机上实测就是这个样子。
             <span
-              className="block truncate text-sm font-semibold text-lark-1 cursor-pointer hover:bg-lark-sunken rounded-md px-1 py-0.5 transition-colors"
+              className="block truncate text-sm font-semibold text-tm-1 cursor-pointer hover:bg-tm-hover rounded-md px-1.5 py-1 transition-colors"
               onDoubleClick={handleStartRename}
               title={`${project.name}（双击重命名）`}
             >
@@ -222,58 +243,82 @@ export default function ProjectDetailPage() {
               onClick={handleReembed}
               title="重新向量化"
               disabled={reembedding}
-              className="flex items-center gap-1.5 px-2 sm:px-3 py-1.5 rounded-lg text-sm font-medium border border-lark-border text-lark-2 hover:bg-lark-sunken disabled:opacity-50 transition-colors"
+              className="flex items-center gap-1.5 px-2 sm:px-3 h-8 rounded-md text-sm border border-tm-border text-tm-2 hover:bg-tm-hover hover:text-tm-1 disabled:opacity-50 transition-colors"
             >
               <RefreshCw size={13} className={reembedding ? "animate-spin" : ""} />
-              {/* 手机上三个带文字的按钮加铃铛放不下，留图标去文字 */}
+              {/* 手机上带文字的按钮加铃铛放不下，留图标去文字 */}
               <span className="hidden sm:inline">{reembedding ? "向量化中..." : "重新向量化"}</span>
             </button>
             <button
               onClick={handleDeleteProject}
               title="删除项目"
               disabled={deleting}
-              className="flex items-center gap-1.5 px-2 sm:px-3 py-1.5 rounded-lg text-sm font-medium border border-lark-danger/30 text-lark-danger hover:bg-lark-danger/5 disabled:opacity-50 transition-colors"
+              className="flex items-center gap-1.5 px-2 sm:px-3 h-8 rounded-md text-sm border border-tm-border text-tm-2 hover:border-tm-danger hover:text-tm-danger hover:bg-tm-danger-light disabled:opacity-50 transition-colors"
             >
               <Trash2 size={13} />
-              <span className="hidden sm:inline">{deleting ? "删除中..." : "删除项目"}</span>
-            </button>
-            <button
-              onClick={() => router.push(`/projects/${id}/meetings/new`)}
-              title="新建会议"
-              className="flex items-center gap-1.5 px-2 sm:px-3 py-1.5 rounded-lg text-sm font-medium bg-lark-blue text-white hover:bg-lark-blue-hover transition-colors"
-            >
-              <Plus size={14} />
-              <span className="hidden sm:inline">新建会议</span>
+              <span className="hidden sm:inline">{deleting ? "删除中..." : "删除"}</span>
             </button>
           </>
         }
       />
 
-      <main className="max-w-3xl mx-auto px-4 sm:px-8 py-8 space-y-6">
-        <ReferenceDocsPanel projectId={id} />
+      <main className="max-w-4xl mx-auto px-4 sm:px-8 py-6 space-y-5">
+        <SourceEntries
+          projectId={id}
+          uploading={refDocs.uploading}
+          onFiles={(files) => void refDocs.upload(files)}
+          onPickFile={() => refDocs.inputRef.current?.click()}
+        />
 
         <ProjectAskPanel projectId={id} />
 
-        <section className="space-y-3">
-          <h2 className="text-xs font-semibold text-lark-3 uppercase tracking-wider">历史会议</h2>
+        <section className="rounded-lg border border-tm-border bg-tm-surface overflow-hidden">
+          <div className="flex items-center gap-2 px-4 h-12 border-b border-tm-border-light">
+            <h2 className="text-sm font-medium text-tm-1">会议</h2>
+            {project.meetings && project.meetings.length > 0 && (
+              <span className="text-xs text-tm-3 tabular-nums">{project.meetings.length}</span>
+            )}
+          </div>
 
-          {(!project.meetings || project.meetings.length === 0) && (
-            <div className="rounded-xl border border-dashed border-lark-border p-8 text-center space-y-3">
-              <p className="text-sm text-lark-3">还没有会议记录</p>
+          {(!project.meetings || project.meetings.length === 0) ? (
+            <div className="px-4 py-8 text-center space-y-2">
+              <p className="text-sm text-tm-3">还没有会议记录</p>
               <button
                 onClick={() => router.push(`/projects/${id}/meetings/new`)}
-                className="text-sm text-lark-blue hover:underline"
+                className="text-sm text-tm-brand hover:underline"
               >
-                开始第一次会议
+                记录第一次会议
               </button>
             </div>
+          ) : (
+            <ul className="divide-y divide-tm-border-light">
+              {project.meetings.map((meeting) => (
+                <MeetingRow key={meeting.id} meeting={meeting} projectId={id} />
+              ))}
+            </ul>
           )}
-
-          {project.meetings && project.meetings.map((meeting) => (
-            <MeetingCard key={meeting.id} meeting={meeting} projectId={id} />
-          ))}
         </section>
+
+        <ReferenceDocsPanel
+          projectId={id}
+          docs={refDocs.docs}
+          loaded={refDocs.loaded}
+          parsingCount={refDocs.parsingCount}
+          onRemove={(doc) => void refDocs.remove(doc)}
+          onPickFile={() => refDocs.inputRef.current?.click()}
+        />
       </main>
-    </div>
+
+      {/* 文件选择框。三入口的「上传文件」和文件区块的「上传」都点它，
+          所以它放在页面级而不是任何一个子组件里。 */}
+      <input
+        ref={refDocs.inputRef}
+        type="file"
+        multiple
+        accept={ACCEPT}
+        className="hidden"
+        onChange={(e) => { if (e.target.files) void refDocs.upload(e.target.files); }}
+      />
+    </AppShell>
   );
 }

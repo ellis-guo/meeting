@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import AppShell from "@/app/components/AppShell";
 import AppHeader from "@/app/components/AppHeader";
 
 // 建项目只要一个名字。
@@ -39,15 +40,15 @@ export default function NewProjectPage() {
   };
 
   return (
-    <div className="min-h-screen bg-lark-canvas">
+    <AppShell>
       <AppHeader
-        back={{ label: "首页", href: "/" }}
-        title={<span className="text-sm font-medium text-lark-1">新建项目</span>}
+        crumbs={[{ label: "项目" }]}
+        title={<span className="text-sm font-medium text-tm-1">新建项目</span>}
       />
 
       <div className="max-w-2xl mx-auto px-4 sm:px-6 py-8 space-y-5">
         <div className="space-y-2">
-          <label className="text-xs font-semibold text-lark-3 uppercase tracking-wider">项目名称</label>
+          <label className="text-xs font-medium text-tm-3">项目名称</label>
           <input
             type="text"
             value={name}
@@ -56,23 +57,23 @@ export default function NewProjectPage() {
             placeholder="例如：产品 Q2 规划"
             autoFocus
             maxLength={100}
-            className="w-full px-4 py-2.5 border border-lark-border rounded-lg text-sm bg-lark-surface text-lark-1 focus:outline-none focus:ring-2 focus:ring-lark-blue/40 placeholder:text-lark-4 transition-colors"
+            className="w-full px-4 py-2.5 border border-tm-border rounded-lg text-sm bg-tm-surface text-tm-1 focus:outline-none focus:ring-2 focus:ring-tm-brand/40 placeholder:text-tm-4 transition-colors"
           />
-          <p className="text-xs text-lark-4">
+          <p className="text-xs text-tm-4">
             建完就能用。需求文档、规范这类材料进项目页的「参考文件」上传，会和会议记录一样进检索。
           </p>
         </div>
 
-        {error && <p className="text-sm text-lark-danger">{error}</p>}
+        {error && <p className="text-sm text-tm-danger">{error}</p>}
 
         <button
           onClick={handleCreate}
           disabled={loading || !name.trim()}
-          className="w-full py-2.5 bg-lark-blue text-white rounded-lg text-sm font-medium hover:bg-lark-blue-hover disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+          className="w-full py-2.5 bg-tm-brand text-white rounded-lg text-sm font-medium hover:bg-tm-brand-hover disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
         >
           {loading ? "创建中..." : "创建项目"}
         </button>
       </div>
-    </div>
+    </AppShell>
   );
 }
