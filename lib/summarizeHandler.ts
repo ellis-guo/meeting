@@ -4,7 +4,8 @@ import { addLineNumbers, extractJSON } from "@/lib/utils";
 import { callDashScope, FAST_CHAT_MODEL } from "@/lib/dashscope";
 import { SUMMARY_SMART_PROMPT, SUMMARY_PROGRESS_PROMPT } from "@/lib/prompts";
 import {
-  buildSummaryChunks, buildTranscriptChunks, insertChunks, type Summary,
+  buildSummaryChunks, buildTranscriptChunks, insertChunks,
+  type Modality, type Summary,
 } from "@/lib/chunking";
 import { markIndexDirty } from "@/lib/dreaming";
 import { enqueue, type ClaimedJob } from "@/lib/jobs";
@@ -51,6 +52,26 @@ function normalizeSummary(raw: unknown): Summary {
   }
   if (!Array.isArray(s.meta.participants)) s.meta.participants = [];
   if (!Array.isArray(s.sections)) s.sections = [];
+
+  // title：模型偶尔会给空串、或者忽略 20 字上限写一整句。空串必须归成 null，
+  // 否则界面上是一块点不出内容的空白；截断而不是丢弃，一个被截短的标题仍然
+  // 比没有强。
+  const rawTitle = (s.meta as { title?: unknown }).title;
+  s.meta.title = typeof rawTitle === "string" && rawTitle.trim()
+    ? rawTitle.trim().slice(0, 40)
+    : null;
+
+  // modality：**只认这两个值**。prompt 是中文的，模型很容易回"线上"/"在线"/
+  // "腾讯会议"，所以留一张很小的别名表；表外的一律归 null，不做模糊匹配——
+  // 一个错的线上/线下标签和对的长得一模一样，用户没法分辨（和引用锚点同一条
+  // 原则：宁可没有也不要错的）。
+  const rawModality = String((s.meta as { modality?: unknown }).modality ?? "").trim().toLowerCase();
+  const MODALITY_ALIASES: Record<string, Modality> = {
+    online: "online", 线上: "online", 在线: "online", remote: "online",
+    offline: "offline", 线下: "offline", 现场: "offline", "in-person": "offline",
+  };
+  s.meta.modality = MODALITY_ALIASES[rawModality] ?? null;
+
   return s;
 }
 
@@ -156,7 +177,9 @@ export async function runSummarize(job: ClaimedJob): Promise<{ tokensUsed?: numb
     payload: { meetingId, mode: "initial" },
   });
 
-  await notifyDone(meeting.user_id, meetingId, meeting.project_id, meetingDate);
+  await notifyDone(
+    meeting.user_id, meetingId, meeting.project_id, meetingDate, summary.meta.title ?? null,
+  );
 
   await log(meetingId, "info", {
     type: "meeting_summarized",
@@ -181,6 +204,7 @@ async function notifyDone(
   meetingId: string,
   projectId: string | null,
   meetingDate: string,
+  meetingTitle: string | null,
 ): Promise<void> {
   let projectName: string | null = null;
   if (projectId) {
@@ -194,7 +218,9 @@ async function notifyDone(
         user_id: userId,
         type: "meeting_ready",
         title: projectName ? `「${projectName}」的会议记录好啦` : "会议记录好啦",
-        body: `${meetingDate} 的记录已经整理完成，可以查看或修改。`,
+        body: meetingTitle
+          ? `${meetingDate}「${meetingTitle}」的记录已经整理完成，可以查看或修改。`
+          : `${meetingDate} 的记录已经整理完成，可以查看或修改。`,
         link: projectId ? `/projects/${projectId}/meetings/${meetingId}` : `/meetings/${meetingId}`,
       },
     })

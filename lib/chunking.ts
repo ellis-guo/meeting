@@ -12,8 +12,22 @@ export type SectionContent =
 
 export type Section = { title: string; content: SectionContent };
 
+/** 线上 / 线下。判不出来就是 null——见 prompts.ts 里那条「不要猜」。 */
+export type Modality = "online" | "offline";
+
 export type Summary = {
-  meta: { date: string | null; time: string | null; participants: string[] };
+  meta: {
+    date: string | null;
+    time: string | null;
+    participants: string[];
+    /**
+     * 2026-09-14 才加的两个字段，**存量会议没有**。可选不是偷懒：
+     * 渲染处必须能接受 undefined，不能拿日期或"未命名会议"顶上去。
+     * ⚠️ app/types.ts 里还有一份给前端用的 Summary，改这里记得一起改。
+     */
+    title?: string | null;
+    modality?: Modality | null;
+  };
   sections: Section[];
   humanistic_note: string | null;
 };

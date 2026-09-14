@@ -24,11 +24,11 @@ export default function AppShell({
   return (
     <SidebarProvider>
       <Sidebar />
-      {/* md:pl 给 fixed 侧边栏让位。移动端侧边栏是抽屉，不占位。
+      {/* lg:pl 给 fixed 侧边栏让位。lg 以下侧边栏是抽屉，不占位。
           min-w-0：内容列里有 flex 布局和长文本，不加这条它们会把整列撑宽，
           在窄屏上表现成整页横向滚动。 */}
       <div
-        className={`md:pl-[232px] min-w-0 ${fullHeight ? "h-screen" : "min-h-screen"} print:pl-0`}
+        className={`lg:pl-[232px] min-w-0 ${fullHeight ? "h-screen" : "min-h-screen"} print:pl-0`}
       >
         {children}
       </div>

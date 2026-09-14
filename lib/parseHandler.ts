@@ -29,6 +29,48 @@ async function log(docId: string, level: string, context: Record<string, unknown
 }
 
 /**
+ * 解析有结果了就通知一声（PRD 4.2 那张图两条支路都画了通知，但这条一直是空的）。
+ *
+ * **成功和失败都发**，和会议那条不一样——会议失败时不发通知，因为用户提交完
+ * 就被带到会议详情页，那页有专门的失败态在等他。文件没有这样一个落地页：
+ * 上传完人就走了，解析失败的话除了项目页文件列表里一行小字，没有任何地方
+ * 会告诉他。不发通知等于静默丢东西。
+ *
+ * ⚠️ 一份文件一条通知。一次传 10 份就是 10 条，铃铛会比较吵。没有做合并是
+ * 因为合并要引入"等多久算一批"的判断，而每份文件的结果本来就是独立的
+ * （可能 8 份成功 2 份失败），合成一条反而说不清楚。真觉得吵再说。
+ */
+async function notifyParsed(
+  userId: string,
+  docId: string,
+  projectId: string,
+  docName: string,
+  result: { ok: true; chunks: number } | { ok: false; reason: string },
+): Promise<void> {
+  const projectName = (await prisma.project.findUnique({
+    where: { id: projectId }, select: { name: true },
+  }))?.name ?? null;
+  const inProject = projectName ? `「${projectName}」` : "";
+
+  await prisma.notification
+    .create({
+      data: {
+        user_id: userId,
+        type: result.ok ? "reference_ready" : "reference_failed",
+        title: result.ok ? `${inProject}的文件已入库` : `${inProject}的文件没能解析`,
+        body: result.ok
+          ? `《${docName}》已入库 ${result.chunks} 段，问答现在能引用到它了。`
+          : `《${docName}》：${result.reason}`,
+        // 失败的文档进不了查看页（那页只认 ready），指回项目页
+        link: result.ok
+          ? `/projects/${projectId}/reference-docs/${docId}`
+          : `/projects/${projectId}`,
+      },
+    })
+    .catch(() => {});
+}
+
+/**
  * 把"这个文件解不了"记到文档行上，而**不是**让任务失败。
  *
  * 区分的判据是老一套：重试能不能改变结果。扫描版 PDF、加密文件、老版 .doc
@@ -36,12 +78,16 @@ async function log(docId: string, level: string, context: Record<string, unknown
  * failed，而真正需要人看的信息（哪份文件、为什么不行）反倒藏在 last_error 的
  * 堆栈里。记在 ReferenceDoc.status 上，前端能直接把原因显示给用户。
  */
-async function markUnparseable(docId: string, reason: string): Promise<void> {
+async function markUnparseable(
+  doc: { id: string; user_id: string; project_id: string; name: string },
+  reason: string,
+): Promise<void> {
   await prisma.referenceDoc.updateMany({
-    where: { id: docId },
+    where: { id: doc.id },
     data: { status: "failed", last_error: reason },
   });
-  await log(docId, "warn", { type: "reference_parse_unparseable", reason });
+  await log(doc.id, "warn", { type: "reference_parse_unparseable", reason });
+  await notifyParsed(doc.user_id, doc.id, doc.project_id, doc.name, { ok: false, reason });
 }
 
 export async function runParseDocument(job: ClaimedJob): Promise<{ tokensUsed?: number } | void> {
@@ -50,7 +96,7 @@ export async function runParseDocument(job: ClaimedJob): Promise<{ tokensUsed?: 
 
   const doc = await prisma.referenceDoc.findUnique({
     where: { id: docId },
-    select: { id: true, project_id: true, name: true, mime_type: true, storage_key: true },
+    select: { id: true, user_id: true, project_id: true, name: true, mime_type: true, storage_key: true },
   });
   // 文件在排队期间被删了。这不是失败——该做的事已经不存在了。
   if (!doc) return;
@@ -66,7 +112,7 @@ export async function runParseDocument(job: ClaimedJob): Promise<{ tokensUsed?: 
   } catch (e) {
     if ((e as NodeJS.ErrnoException).code === "ENOENT") {
       // 原件不在磁盘上了。重试不会让它回来。
-      await markUnparseable(docId, "原件已丢失，请重新上传");
+      await markUnparseable(doc, "原件已丢失，请重新上传");
       return;
     }
     throw e; // 磁盘 I/O 故障是暂时的，交给队列重试
@@ -80,7 +126,7 @@ export async function runParseDocument(job: ClaimedJob): Promise<{ tokensUsed?: 
     ({ kind, text, truncated, warnings } = await extractDocumentText(data, doc.name, doc.mime_type));
   } catch (e) {
     if (e instanceof UnparseableDocument) {
-      await markUnparseable(docId, e.message);
+      await markUnparseable(doc, e.message);
       return;
     }
     throw e;
@@ -119,6 +165,10 @@ export async function runParseDocument(job: ClaimedJob): Promise<{ tokensUsed?: 
     // mammoth 的 "Unrecognised paragraph style" 之类：说明文档用了自定义样式，
     // 标题可能压根没被认出来
     warnings: warnings.slice(0, 10),
+  });
+
+  await notifyParsed(doc.user_id, docId, doc.project_id, doc.name, {
+    ok: true, chunks: created.length,
   });
 
   // 索引层暂时不标脏：dreamHandler 现在只读会议摘要，参考文件进不了它的来源集，

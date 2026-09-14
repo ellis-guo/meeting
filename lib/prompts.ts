@@ -25,6 +25,8 @@ const SHARED_SCHEMA = `<schema>
   "meta": {
     "date": "string or null",
     "time": "string or null",
+    "title": "string or null",
+    "modality": "\"online\" | \"offline\" | null",
     "participants": ["string"]
   },
   "sections": [
@@ -54,6 +56,8 @@ ${SHARED_SCHEMA}
 ## 字段说明
 - meta.date：从会议记录或上下文中提取日期，若未提及则为 null
 - meta.time：从会议记录中提取会议开始时间，若未提及则为 null
+- meta.title：给这次会议起一个**不超过 20 字**的标题，概括这次会议最主要的那件事（如"供应商报价评审""Q2 排期确认"）。不要用"会议记录""周会""项目讨论"这类没有信息量的词；确实概括不出来则为 null
+- meta.modality：这是线上会议还是线下会议。只能填 "online" / "offline" / null。**没有明确证据时必须填 null，不要猜。** 判据示例——提到腾讯会议 / Zoom / 飞书 / Teams / 共享屏幕 / 网络卡顿 / 掉线 / 麦克风静音 → online；提到会议室 / 白板 / 投影 / 到场 / 面对面 → offline
 - meta.participants：提取会议记录中出现的所有发言者姓名
 ${HUMANISTIC_NOTE_RULE}
 
@@ -86,6 +90,8 @@ ${SHARED_SCHEMA}
 ## 字段说明
 - meta.date：优先使用 context 中提供的会议日期；若未提供则从会议记录中提取，仍未找到则为 null
 - meta.time：从会议记录中提取会议开始时间，若未提及则为 null
+- meta.title：给这次会议起一个**不超过 20 字**的标题，概括这次会议最主要的那件事（如"供应商报价评审""Q2 排期确认"）。不要用"会议记录""周会""项目讨论"这类没有信息量的词；确实概括不出来则为 null
+- meta.modality：这是线上会议还是线下会议。只能填 "online" / "offline" / null。**没有明确证据时必须填 null，不要猜。** 判据示例——提到腾讯会议 / Zoom / 飞书 / Teams / 共享屏幕 / 网络卡顿 / 掉线 / 麦克风静音 → online；提到会议室 / 白板 / 投影 / 到场 / 面对面 → offline
 - meta.participants：提取会议记录中出现的所有发言者姓名
 ${HUMANISTIC_NOTE_RULE}
 

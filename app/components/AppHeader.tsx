@@ -77,12 +77,12 @@ export default function AppHeader({
       {/* min-w-0 让左侧在空间不够时可以收缩（flex 子项默认 min-width:auto，
           不加这条标题就会把右侧按钮顶出屏幕），右侧 shrink-0 保住操作区。 */}
       <div className="flex items-center gap-2 sm:gap-3 min-w-0">
-        {/* 汉堡：只在移动端出现，桌面端侧边栏是常驻的 */}
+        {/* 汉堡：lg 以下出现（手机 + 平板），lg 起侧边栏常驻就不需要了 */}
         <button
           type="button"
           onClick={() => setOpen(true)}
           aria-label="打开导航"
-          className="md:hidden -ml-1.5 p-1.5 rounded-md text-tm-2 hover:bg-tm-hover transition-colors shrink-0 print:hidden"
+          className="lg:hidden -ml-1.5 p-1.5 rounded-md text-tm-2 hover:bg-tm-hover transition-colors shrink-0 print:hidden"
         >
           <Menu size={18} />
         </button>

@@ -5,12 +5,13 @@ import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { toast } from "sonner";
 import { ChevronRight, RefreshCw, Trash2 } from "lucide-react";
-import { Project } from "@/app/types";
+import { Modality, Project } from "@/app/types";
 import AppShell from "@/app/components/AppShell";
 import AppHeader from "@/app/components/AppHeader";
 import ProjectAskPanel from "@/app/components/ProjectAskPanel";
 import ReferenceDocsPanel from "@/app/components/ReferenceDocsPanel";
 import SourceEntries from "@/app/components/SourceEntries";
+import ModalityTag from "@/app/components/ModalityTag";
 import { useConfirm } from "@/lib/ConfirmContext";
 import { ACCEPT, useReferenceDocs } from "@/lib/useReferenceDocs";
 import { patchName, removeLocal, refresh as refreshProjects } from "@/lib/projectsStore";
@@ -18,7 +19,14 @@ import { patchName, removeLocal, refresh as refreshProjects } from "@/lib/projec
 type MeetingCardData = {
   id: string;
   created_at: string;
-  summary: { meta: { date: string | null; participants: string[] } };
+  summary: {
+    meta: {
+      date: string | null;
+      participants: string[];
+      title?: string | null;
+      modality?: Modality | null;
+    };
+  };
   processing_status?: string;
 };
 
@@ -43,27 +51,38 @@ function StatusBadge({ meeting }: { meeting: MeetingCardData }) {
 }
 
 /**
- * 会议的一行。
+ * 会议的一行：日期 + AI 生成的标题 + 线上/线下 tag（PRD 4.3）。
  *
- * PRD 4.3 要的是「日期 + AI 生成的标题 + 线上/线下 tag」，但 Meeting 表还没有
- * 标题字段，也没有线上线下这个维度（P5 的剩余项）。这里只渲染真实存在的
- * 日期和参会人——编一个占位标题出来，用户分不出那是"还没做"还是"模型没提取到"。
+ * ⚠️ 标题和 tag 都可能没有——2026-09-14 之前的存量会议没这两个字段，模型也
+ * 可能按 prompt 要求填了 null。**没有就不占位**：标题缺席时参会人顶上来当主
+ * 信息（也就是改之前的样子），而不是渲染一个"未命名会议"。占位文案会让用户
+ * 以为那是模型给的结论。
  */
 function MeetingRow({ meeting, projectId }: { meeting: MeetingCardData; projectId: string }) {
   const { meta } = meeting.summary;
   const date = meta.date ?? new Date(meeting.created_at).toLocaleDateString("zh-CN");
   const participants = meta.participants.length > 0 ? meta.participants.join("、") : "—";
+  const title = meta.title?.trim() || null;
 
   return (
     <li>
       <Link
         href={`/projects/${projectId}/meetings/${meeting.id}`}
-        aria-label={`${date} 的会议记录`}
+        aria-label={title ? `${date}「${title}」` : `${date} 的会议记录`}
         className="flex items-center gap-3 px-4 py-3 hover:bg-tm-sunken transition-colors"
       >
-        <span className="text-sm text-tm-1 tabular-nums shrink-0 w-24">{date}</span>
+        <span className="text-sm text-tm-2 tabular-nums shrink-0 w-24">{date}</span>
         <StatusBadge meeting={meeting} />
-        <span className="text-sm text-tm-3 truncate flex-1 min-w-0">{participants}</span>
+        {title ? (
+          <span className="flex items-baseline gap-2 flex-1 min-w-0">
+            <span className="text-sm font-medium text-tm-1 truncate">{title}</span>
+            {/* 有标题时参会人退成次要信息，窄屏上直接让位 */}
+            <span className="hidden sm:block text-xs text-tm-3 truncate">{participants}</span>
+          </span>
+        ) : (
+          <span className="text-sm text-tm-3 truncate flex-1 min-w-0">{participants}</span>
+        )}
+        <ModalityTag modality={meta.modality} />
         <ChevronRight size={15} className="text-tm-4 shrink-0" />
       </Link>
     </li>

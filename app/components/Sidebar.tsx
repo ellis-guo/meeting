@@ -162,8 +162,11 @@ export default function Sidebar() {
 
   return (
     <>
-      {/* 桌面端：常驻。print:hidden —— 会议记录要打印，导航不该出现在纸上。 */}
-      <aside className="hidden md:block fixed inset-y-0 left-0 w-[232px] border-r border-tm-border print:hidden">
+      {/* 常驻侧边栏从 lg（1024px）起，不是 md（768px）。
+          768px 上留给它 232px 的话，内容区只剩 536px——比手机宽不了多少，
+          而会议详情那种双栏页在 md 就已经并排了，正好被挤成两条窄柱。
+          平板走抽屉：内容区拿满宽，需要导航时划出来。 */}
+      <aside className="hidden lg:block fixed inset-y-0 left-0 w-[232px] border-r border-tm-border print:hidden">
         <Nav />
       </aside>
 
@@ -172,7 +175,7 @@ export default function Sidebar() {
           listeners 是 Set，多一个订阅者不会多打一次请求，这里就不做条件渲染了，
           留着能做 transition。 */}
       <div
-        className={`md:hidden fixed inset-0 z-40 print:hidden ${open ? "" : "pointer-events-none"}`}
+        className={`lg:hidden fixed inset-0 z-40 print:hidden ${open ? "" : "pointer-events-none"}`}
         aria-hidden={!open}
       >
         <div

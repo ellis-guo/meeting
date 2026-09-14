@@ -4,7 +4,9 @@ import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
 import Link from "next/link";
 import { useAuth } from "@clerk/nextjs";
 import { AlertCircle, ChevronRight, FileText, Plus } from "lucide-react";
+import { Modality } from "./types";
 import AppShell from "./components/AppShell";
+import ModalityTag from "./components/ModalityTag";
 import AppHeader from "./components/AppHeader";
 import {
   getEmptySnapshot,
@@ -14,7 +16,13 @@ import {
   subscribe,
 } from "@/lib/projectsStore";
 
-type StandaloneMeeting = { id: string; created_at: string; date: string | null };
+type StandaloneMeeting = {
+  id: string;
+  created_at: string;
+  date: string | null;
+  title: string | null;
+  modality: Modality | null;
+};
 
 export default function Home() {
   const { isSignedIn } = useAuth();
@@ -144,17 +152,17 @@ export default function Home() {
                 <li key={m.id}>
                   <Link
                     href={`/meetings/${m.id}`}
-                    className="flex items-center justify-between gap-2 px-4 py-3 hover:bg-tm-sunken transition-colors"
+                    className="flex items-center gap-3 px-4 py-3 hover:bg-tm-sunken transition-colors"
                   >
-                    <span className="text-sm text-tm-1 tabular-nums">
+                    <span className="text-sm text-tm-2 tabular-nums shrink-0 w-24">
                       {m.date ?? new Date(m.created_at).toLocaleDateString("zh-CN")}
                     </span>
-                    <span className="flex items-center gap-2 shrink-0">
-                      <span className="text-xs text-tm-3 tabular-nums">
-                        {new Date(m.created_at).toLocaleDateString("zh-CN")}
-                      </span>
-                      <ChevronRight size={14} className="text-tm-4" />
+                    {/* 标题缺席时这一格就空着——存量会议没有它，不编占位文案 */}
+                    <span className="text-sm font-medium text-tm-1 truncate flex-1 min-w-0">
+                      {m.title?.trim() || ""}
                     </span>
+                    <ModalityTag modality={m.modality} />
+                    <ChevronRight size={14} className="text-tm-4 shrink-0" />
                   </Link>
                 </li>
               ))}

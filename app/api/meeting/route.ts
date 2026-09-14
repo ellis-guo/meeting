@@ -23,9 +23,18 @@ export async function GET() {
 
   return NextResponse.json({
     meetings: meetings.map((m) => {
-      let date: string | null = null;
-      try { date = (decryptJSON<{ meta?: { date?: string | null } }>(m.summary))?.meta?.date ?? null; } catch { /* ignore */ }
-      return { id: m.id, created_at: m.created_at, date };
+      let meta: { date?: string | null; title?: string | null; modality?: string | null } = {};
+      try {
+        meta = decryptJSON<{ meta?: typeof meta }>(m.summary)?.meta ?? {};
+      } catch { /* 解不开就当没有元信息，列表照常出，只是少了标题 */ }
+      return {
+        id: m.id,
+        created_at: m.created_at,
+        date: meta.date ?? null,
+        // 存量会议没有这两个字段，返回 null 而不是省略——前端少一次 undefined 判断
+        title: meta.title ?? null,
+        modality: (meta.modality === "online" || meta.modality === "offline") ? meta.modality : null,
+      };
     }),
   });
 }

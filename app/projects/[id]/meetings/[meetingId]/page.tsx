@@ -7,6 +7,7 @@ import { toast } from "sonner";
 import { Pencil, Printer, Trash2, X } from "lucide-react";
 import AppShell from "@/app/components/AppShell";
 import AppHeader from "@/app/components/AppHeader";
+import ModalityTag from "@/app/components/ModalityTag";
 import SummaryPanel from "@/app/components/SummaryPanel";
 import TranscriptPanel from "@/app/components/TranscriptPanel";
 import MeetingAskPanel from "@/app/components/MeetingAskPanel";
@@ -117,7 +118,18 @@ export default function MeetingDetailPage() {
       <AppHeader
         variant="app"
         crumbs={[{ label: "项目", href: `/projects/${projectId}` }]}
-        title={<span className="text-sm font-medium text-tm-1 tabular-nums">{date}</span>}
+        title={
+          // 标题可能没有（存量会议 / 模型没把握），那就只剩日期——不占位。
+          <span className="flex items-baseline gap-2 min-w-0">
+            <span className="text-sm text-tm-2 tabular-nums shrink-0">{date}</span>
+            {summary.meta.title?.trim() && (
+              <span className="text-sm font-medium text-tm-1 truncate">
+                {summary.meta.title.trim()}
+              </span>
+            )}
+            <ModalityTag modality={summary.meta.modality} />
+          </span>
+        }
         actions={
           <>
             <button
