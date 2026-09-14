@@ -3,7 +3,7 @@ import { auth } from "@clerk/nextjs/server";
 import { prisma } from "@/lib/prisma";
 import { decrypt, decryptJSON } from "@/lib/crypto";
 import { getDashScopeKey } from "@/lib/apiKey.server";
-import { addLineNumbers, extractJSON } from "@/lib/utils";
+import { ASK_DEBUG, addLineNumbers, extractJSON } from "@/lib/utils";
 import { callDashScope, callDashScopeStream, fetchEmbedding, DashScopeUsage } from "@/lib/dashscope";
 import { FULL_TEXT_ASK_PROMPT, RAG_ASK_PROMPT } from "@/lib/prompts";
 import { checkRateLimit } from "@/lib/ratelimit";
@@ -80,14 +80,18 @@ export async function POST(
             } catch { /* no valid sources */ }
           }
 
-          const _debug = {
-            path: "full_text",
-            estimated_tokens: estimatedTokens,
-            token_usage: { answer: answerUsage },
-            timings_ms: { answer_llm: answerMs, total: Date.now() - tTotal },
-          };
+          // 和项目级 ask 同一个写法：生产环境 donePayload 里就没有 _debug 这个键。
+          const donePayload: Record<string, unknown> = { sources };
+          if (ASK_DEBUG) {
+            donePayload._debug = {
+              path: "full_text",
+              estimated_tokens: estimatedTokens,
+              token_usage: { answer: answerUsage },
+              timings_ms: { answer_llm: answerMs, total: Date.now() - tTotal },
+            };
+          }
 
-          controller.enqueue(send("done", { sources, _debug }));
+          controller.enqueue(send("done", donePayload));
           controller.close();
 
         } else {
@@ -122,12 +126,17 @@ export async function POST(
           `;
           const retrievalMs = Date.now() - tRetrieval;
 
-          const [totalChunksRes, embeddedChunksRes] = await Promise.all([
-            prisma.$queryRaw<[{ count: bigint }]>`SELECT COUNT(*)::int AS count FROM "Chunk" WHERE meeting_id = ${meetingId}`,
-            prisma.$queryRaw<[{ count: bigint }]>`SELECT COUNT(*)::int AS count FROM "Chunk" WHERE meeting_id = ${meetingId} AND embedding IS NOT NULL`,
-          ]);
-          const totalChunks = Number(totalChunksRes[0]?.count ?? 0);
-          const embeddedChunks = Number(embeddedChunksRes[0]?.count ?? 0);
+          // 这两条 COUNT 只喂 _debug，生产上那个字段根本不发——所以也不查。
+          let totalChunks = 0;
+          let embeddedChunks = 0;
+          if (ASK_DEBUG) {
+            const [totalChunksRes, embeddedChunksRes] = await Promise.all([
+              prisma.$queryRaw<[{ count: bigint }]>`SELECT COUNT(*)::int AS count FROM "Chunk" WHERE meeting_id = ${meetingId}`,
+              prisma.$queryRaw<[{ count: bigint }]>`SELECT COUNT(*)::int AS count FROM "Chunk" WHERE meeting_id = ${meetingId} AND embedding IS NOT NULL`,
+            ]);
+            totalChunks = Number(totalChunksRes[0]?.count ?? 0);
+            embeddedChunks = Number(embeddedChunksRes[0]?.count ?? 0);
+          }
 
           const contextParts = hits.map((c) => `[${c.speaker ?? "未知"}] ${c.search_text ?? ""}`);
           const userMessage = `相关逐字稿片段：\n${contextParts.join("\n\n---\n\n")}\n\n问题：${question}`;
@@ -153,21 +162,26 @@ export async function POST(
             return;
           }
 
-          const _debug = {
-            path: "rag",
-            transcript_hits: hits.length,
-            chunks_total: totalChunks,
-            chunks_with_embedding: embeddedChunks,
-            token_usage: { embed: embedUsage, answer: ragAnswerUsage },
-            timings_ms: { embed: embedMs, retrieval: retrievalMs, answer_llm: answerMs, total: Date.now() - tTotal },
-            all_retrieved_chunks: hits.map((c) => ({
-              type: c.chunk_type, speaker: c.speaker, section: c.section_title,
-              line_start: c.line_start, text: (c.search_text ?? "").slice(0, 150),
-            })),
-          };
+          const donePayload: Record<string, unknown> = { sources: parsed.sources ?? [] };
+          if (ASK_DEBUG) {
+            donePayload._debug = {
+              path: "rag",
+              transcript_hits: hits.length,
+              chunks_total: totalChunks,
+              chunks_with_embedding: embeddedChunks,
+              token_usage: { embed: embedUsage, answer: ragAnswerUsage },
+              timings_ms: { embed: embedMs, retrieval: retrievalMs, answer_llm: answerMs, total: Date.now() - tTotal },
+              // 这一段会把每条命中片段的正文截 150 字带上——生产上白发一遍用户
+              // 自己的会议内容，没人看。
+              all_retrieved_chunks: hits.map((c) => ({
+                type: c.chunk_type, speaker: c.speaker, section: c.section_title,
+                line_start: c.line_start, text: (c.search_text ?? "").slice(0, 150),
+              })),
+            };
+          }
 
           controller.enqueue(send("token", { text: parsed.answer ?? raw_answer }));
-          controller.enqueue(send("done", { sources: parsed.sources ?? [], _debug }));
+          controller.enqueue(send("done", donePayload));
           controller.close();
         }
       } catch (e) {

@@ -5,7 +5,7 @@ import { decryptJSON } from "@/lib/crypto";
 import { getDashScopeKey } from "@/lib/apiKey.server";
 import { extractKeywords } from "@/lib/jieba";
 import { callDashScope, callDashScopeStream, fetchEmbedding, fetchEmbeddings, FAST_CHAT_MODEL, DashScopeUsage } from "@/lib/dashscope";
-import { extractJSON } from "@/lib/utils";
+import { ASK_DEBUG, extractJSON } from "@/lib/utils";
 import { ASK_SYSTEM_PROMPT, ANALYZE_SYSTEM_PROMPT } from "@/lib/prompts";
 import { Prisma } from "@/app/generated/prisma/client";
 import { checkRateLimit } from "@/lib/ratelimit";
@@ -766,34 +766,40 @@ export async function POST(
 
   const body = new ReadableStream({
     async start(controller) {
-      // Fire stats queries in parallel with LLM stream — meetingDateIndex
-      // is needed when resolving sources after the stream finishes; the rest
-      // are only used in _debug. ProcessingLog uses subquery to avoid a
-      // separate meeting-id round-trip.
-      const statsPromise = Promise.all([
-        prisma.$queryRaw<[{ count: bigint }]>`SELECT COUNT(*)::int AS count FROM "Chunk" WHERE project_id = ${projectId}`,
-        prisma.$queryRaw<[{ count: bigint }]>`SELECT COUNT(*)::int AS count FROM "Chunk" WHERE project_id = ${projectId} AND embedding IS NOT NULL`,
+      // 和 LLM 流并发跑。只有这两条是**出结果必需**的：
+      // meetingDateIndex 在流结束后把来源里的日期换回 meeting_id；
+      // refDocRows 把文件名换回 id——模型在 %%SOURCES%% 里只报得出文件名
+      //（它看到的就是 `[参考文件 · 文件名]`），要落成可跳转的来源得在服务端换。
+      const essentialPromise = Promise.all([
         prisma.$queryRaw<Array<{ meeting_id: string; meeting_date: string }>>`
           SELECT DISTINCT ON (meeting_date) meeting_id, meeting_date
           FROM "Chunk"
           WHERE project_id = ${projectId} AND meeting_date IS NOT NULL
           ORDER BY meeting_date
         `,
-        prisma.$queryRaw<Array<{ context: string }>>`
-          SELECT context FROM "ProcessingLog"
-          WHERE meeting_id IN (SELECT id FROM "Meeting" WHERE project_id = ${projectId})
-            AND level = 'error'
-          ORDER BY created_at DESC
-          LIMIT 5
-        `,
-        // 参考文件的 名字 → id。模型在 %%SOURCES%% 里只报得出文件名（它看到的
-        // 就是 `[参考文件 · 文件名]`），要落成可跳转的来源得在服务端换回 id
-        // ——和 meetingDateIndex 同一个套路。
         prisma.referenceDoc.findMany({
           where: { project_id: projectId },
           select: { id: true, name: true },
         }),
       ]);
+
+      // 这三条**只喂 _debug**：两条纯统计 COUNT，加一次 ProcessingLog（拿回来还要
+      // 逐条解密）。生产上 _debug 整个字段都不发，所以这一组一条都不查——原先是
+      // 无条件跑的，等于每次提问白付 3 条查询 + 5 次解密。
+      // ProcessingLog 用子查询而不是先取 meeting id，省一个来回。
+      const debugStatsPromise = ASK_DEBUG
+        ? Promise.all([
+            prisma.$queryRaw<[{ count: bigint }]>`SELECT COUNT(*)::int AS count FROM "Chunk" WHERE project_id = ${projectId}`,
+            prisma.$queryRaw<[{ count: bigint }]>`SELECT COUNT(*)::int AS count FROM "Chunk" WHERE project_id = ${projectId} AND embedding IS NOT NULL`,
+            prisma.$queryRaw<Array<{ context: string }>>`
+              SELECT context FROM "ProcessingLog"
+              WHERE meeting_id IN (SELECT id FROM "Meeting" WHERE project_id = ${projectId})
+                AND level = 'error'
+              ORDER BY created_at DESC
+              LIMIT 5
+            `,
+          ])
+        : null;
 
       const tAnswer = Date.now();
       let fullText = "";
@@ -815,21 +821,11 @@ export async function POST(
       }
       const answerMs = Date.now() - tAnswer;
 
-      const [totalChunksRes, embeddedChunksRes, meetingDateRows, embeddingLogs, refDocRows] =
-        await statsPromise;
-      const totalChunks = Number(totalChunksRes[0]?.count ?? 0);
-      const embeddedChunks = Number(embeddedChunksRes[0]?.count ?? 0);
+      const [meetingDateRows, refDocRows] = await essentialPromise;
       const meetingDateIndex = new Map(
         meetingDateRows.map((r) => [r.meeting_date, r.meeting_id]),
       );
       const refDocIndex = new Map(refDocRows.map((d) => [d.name, d.id]));
-      const recentEmbedErrors = embeddingLogs.map((log) => {
-        try {
-          return decryptJSON<Record<string, unknown>>(log.context);
-        } catch {
-          return log.context;
-        }
-      });
 
       // Parse sources from separator section
       type RawSource = {
@@ -909,71 +905,84 @@ export async function POST(
         };
       };
 
-      const _debug = {
-        token_usage: {
-          analyze: analyzeUsage,
-          embed_original: embedOriginalUsage,
-          embed_variants: embedVariantsUsage,
-          answer: answerUsage,
-          total: sumUsage([analyzeUsage, embedOriginalUsage, embedVariantsUsage, answerUsage]),
-        },
-        source_citation_summary: citationCounts,
-        timings_ms: {
-          analyze_llm: analyzeMs,
-          embed_original: embedOriginalMs,
-          embed_variants: embedVariantsMs,
-          retrieval: retrievalMs,
-          answer_llm: answerMs,
-          total: Date.now() - tTotal,
-        },
-        routing: {
-          intent: analysis.intent,
-          effective_intent: effectiveIntent,
-          speakers: validSpeakers,
-          date_filter: analysis.date_filter,
-          date_op: analysis.date_op,
-          resolved_date: resolvedDate,
-          resolved_dates: resolvedDates,
-          meeting_count: analysis.meeting_count,
-          candidate_cap: candidateCap,
-          date_meeting_count: dateMeetingCount,
-        },
-        rewritten_queries: analysis.queries,
-        query_vectors_count: allVecs.length,
-        summary_hits: summaryResultsPerVec.map((r) => r.length),
-        transcript_hits: transcriptResultsPerVec.map((r) => r.length),
-        reference_hits: referenceResultsPerVec.map((r) => r.length),
-        // false = 这次问题被判成钉在某次会议上（date/meeting），没检索参考文件
-        reference_searched: wantReference,
-        bm25_hits: bm25Hits.length,
-        ilike_hits: ilikeHits.length,
-        merged_count: merged.length,
-        parent_chunks_used: parentRows.length,
-        no_parent_fallback: noParentTranscript.length,
-        reference_chunks_used: referenceChunks.length,
-        chunks_total: totalChunks,
-        chunks_with_embedding: embeddedChunks,
-        recent_embed_errors: recentEmbedErrors,
-        all_retrieved_chunks: merged.map((c) => ({
-          type: c.chunk_type,
-          date: c.meeting_date,
-          speaker: c.speaker,
-          section: c.section_title,
-          parent_id: c.parent_id,
-          text: (c.search_text ?? "").slice(0, 150),
-          vec_distances: vecDistMap.get(c.id) ?? null,
-        })),
-        parent_chunks: parentRows.map((p) => ({
-          id: p.id,
-          date: p.meeting_date,
-          speakers: p.speakers,
-          hits: parentHits.get(p.id) ?? 1,
-          text: p.content.slice(0, 300),
-        })),
-      };
-
       const donePayload: Record<string, unknown> = { sources };
-      if (process.env.NODE_ENV !== "production") donePayload._debug = _debug;
+
+      // debugStatsPromise 非 null ⇔ ASK_DEBUG 为真。用它本身当条件，比再判一次
+      // ASK_DEBUG 好：类型收窄是免费的，不需要非空断言。
+      if (debugStatsPromise) {
+        const [totalChunksRes, embeddedChunksRes, embeddingLogs] = await debugStatsPromise;
+        const recentEmbedErrors = embeddingLogs.map((log) => {
+          try {
+            return decryptJSON<Record<string, unknown>>(log.context);
+          } catch {
+            return log.context;
+          }
+        });
+
+        donePayload._debug = {
+          token_usage: {
+            analyze: analyzeUsage,
+            embed_original: embedOriginalUsage,
+            embed_variants: embedVariantsUsage,
+            answer: answerUsage,
+            total: sumUsage([analyzeUsage, embedOriginalUsage, embedVariantsUsage, answerUsage]),
+          },
+          source_citation_summary: citationCounts,
+          timings_ms: {
+            analyze_llm: analyzeMs,
+            embed_original: embedOriginalMs,
+            embed_variants: embedVariantsMs,
+            retrieval: retrievalMs,
+            answer_llm: answerMs,
+            total: Date.now() - tTotal,
+          },
+          routing: {
+            intent: analysis.intent,
+            effective_intent: effectiveIntent,
+            speakers: validSpeakers,
+            date_filter: analysis.date_filter,
+            date_op: analysis.date_op,
+            resolved_date: resolvedDate,
+            resolved_dates: resolvedDates,
+            meeting_count: analysis.meeting_count,
+            candidate_cap: candidateCap,
+            date_meeting_count: dateMeetingCount,
+          },
+          rewritten_queries: analysis.queries,
+          query_vectors_count: allVecs.length,
+          summary_hits: summaryResultsPerVec.map((r) => r.length),
+          transcript_hits: transcriptResultsPerVec.map((r) => r.length),
+          reference_hits: referenceResultsPerVec.map((r) => r.length),
+          // false = 这次问题被判成钉在某次会议上（date/meeting），没检索参考文件
+          reference_searched: wantReference,
+          bm25_hits: bm25Hits.length,
+          ilike_hits: ilikeHits.length,
+          merged_count: merged.length,
+          parent_chunks_used: parentRows.length,
+          no_parent_fallback: noParentTranscript.length,
+          reference_chunks_used: referenceChunks.length,
+          chunks_total: Number(totalChunksRes[0]?.count ?? 0),
+          chunks_with_embedding: Number(embeddedChunksRes[0]?.count ?? 0),
+          recent_embed_errors: recentEmbedErrors,
+          all_retrieved_chunks: merged.map((c) => ({
+            type: c.chunk_type,
+            date: c.meeting_date,
+            speaker: c.speaker,
+            section: c.section_title,
+            parent_id: c.parent_id,
+            text: (c.search_text ?? "").slice(0, 150),
+            vec_distances: vecDistMap.get(c.id) ?? null,
+          })),
+          parent_chunks: parentRows.map((p) => ({
+            id: p.id,
+            date: p.meeting_date,
+            speakers: p.speakers,
+            hits: parentHits.get(p.id) ?? 1,
+            text: p.content.slice(0, 300),
+          })),
+        };
+      }
+
       controller.enqueue(send("done", donePayload));
       controller.close();
     },
