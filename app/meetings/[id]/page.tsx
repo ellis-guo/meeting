@@ -12,8 +12,16 @@ import MeetingAskPanel from "@/app/components/MeetingAskPanel";
 import { useConfirm } from "@/lib/ConfirmContext";
 import { useMeetingDetail } from "@/lib/useMeetingDetail";
 import MeetingProcessing from "@/app/components/MeetingProcessing";
+import PanelTabs from "@/app/components/PanelTabs";
 
 type PopupState = { sourceLines: number[]; x: number; y: number } | null;
+
+/** 手机上「摘要 / 逐字稿」只能二选一显示，md 以上并排，这个状态就没用了。 */
+const PANEL_TABS = [
+  { key: "summary", label: "摘要" },
+  { key: "transcript", label: "逐字稿" },
+] as const;
+type PanelTab = (typeof PANEL_TABS)[number]["key"];
 
 export default function StandaloneMeetingDetailPage() {
   const params = useParams();
@@ -28,6 +36,7 @@ export default function StandaloneMeetingDetailPage() {
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [popup, setPopup] = useState<PopupState>(null);
+  const [mobileTab, setMobileTab] = useState<PanelTab>("summary");
   const [highlightedLines, setHighlightedLines] = useState<number[]>([]);
 
   const handleSourceClick = (sourceLines: number[], x: number, y: number) => {
@@ -106,45 +115,61 @@ export default function StandaloneMeetingDetailPage() {
           <>
             <button
               onClick={() => { setIsEditing((v) => !v); setPopup(null); }}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
+              title={isEditing ? "完成编辑" : "编辑"}
+              className={`flex items-center gap-1.5 px-2 sm:px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
                 isEditing
                   ? "bg-lark-blue text-white"
                   : "border border-lark-border text-lark-2 hover:bg-lark-sunken"
               }`}
             >
               <Pencil size={13} />
-              {isEditing ? "完成编辑" : "编辑"}
+              {/* 手机上四个按钮加铃铛放不下，留图标去文字；title 保住可读性 */}
+              <span className="hidden sm:inline">{isEditing ? "完成编辑" : "编辑"}</span>
             </button>
             {isEditing && (
               <button
                 onClick={handleSave}
                 disabled={saving}
-                className="px-3 py-1.5 rounded-lg text-sm font-medium bg-lark-blue text-white hover:bg-lark-blue-hover disabled:opacity-50 transition-colors"
+                className="px-2 sm:px-3 py-1.5 rounded-lg text-sm font-medium bg-lark-blue text-white hover:bg-lark-blue-hover disabled:opacity-50 transition-colors shrink-0"
               >
                 {saving ? "保存中..." : "保存"}
               </button>
             )}
             <button
               onClick={() => window.print()}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium border border-lark-border text-lark-2 hover:bg-lark-sunken transition-colors"
+              title="导出 PDF"
+              className="flex items-center gap-1.5 px-2 sm:px-3 py-1.5 rounded-lg text-sm font-medium border border-lark-border text-lark-2 hover:bg-lark-sunken transition-colors"
             >
               <Printer size={13} />
-              导出 PDF
+              <span className="hidden sm:inline">导出 PDF</span>
             </button>
             <button
               onClick={handleDelete}
               disabled={deleting}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium border border-lark-danger/30 text-lark-danger hover:bg-lark-danger/5 disabled:opacity-50 transition-colors"
+              title="删除"
+              className="flex items-center gap-1.5 px-2 sm:px-3 py-1.5 rounded-lg text-sm font-medium border border-lark-danger/30 text-lark-danger hover:bg-lark-danger/5 disabled:opacity-50 transition-colors"
             >
               <Trash2 size={13} />
-              {deleting ? "删除中..." : "删除"}
+              <span className="hidden sm:inline">{deleting ? "删除中..." : "删除"}</span>
             </button>
           </>
         }
       />
 
+      <PanelTabs
+        tabs={PANEL_TABS}
+        value={mobileTab}
+        onChange={(k) => setMobileTab(k as PanelTab)}
+      />
+
       <div className="flex flex-1 overflow-hidden min-h-0">
-        <div className="w-1/2 print:w-full overflow-y-auto border-r border-lark-border print:border-none p-6 print:p-8">
+        {/* print:block 是给"手机上停在逐字稿那栏时去打印"兜底的——导出 PDF 永远只出
+            摘要，不能因为当前切在另一栏就打印出一张空白页。 */}
+        <div
+          className={`w-full md:w-1/2 overflow-y-auto md:border-r border-lark-border p-4 sm:p-6 print:w-full print:border-none print:p-8 print:block ${
+            mobileTab === "summary" ? "" : "hidden md:block"
+          }`}
+        >
           <SummaryPanel
             summary={summary}
             isEditing={isEditing}
@@ -152,7 +177,11 @@ export default function StandaloneMeetingDetailPage() {
             onSummaryChange={setSummary}
           />
         </div>
-        <div className="w-1/2 print:hidden overflow-y-auto p-6 bg-lark-sunken">
+        <div
+          className={`w-full md:w-1/2 print:hidden overflow-y-auto p-4 sm:p-6 bg-lark-sunken ${
+            mobileTab === "transcript" ? "" : "hidden md:block"
+          }`}
+        >
           <TranscriptPanel
             numberedTranscript={numberedTranscript}
             highlightedLines={highlightedLines}
@@ -164,8 +193,14 @@ export default function StandaloneMeetingDetailPage() {
 
       {popup && !isEditing && (
         <div
-          className="fixed bg-lark-surface border border-lark-border rounded-xl p-4 z-50 min-w-44 print:hidden"
-          style={{ left: popup.x, top: Math.min(popup.y, window.innerHeight - 220), boxShadow: "var(--lark-shadow-modal)" }}
+          className="fixed bg-lark-surface border border-lark-border rounded-xl p-4 z-50 min-w-44 max-w-[calc(100vw-1rem)] print:hidden"
+          style={{
+            // y 本来就有兜底，x 一直没有。375px 屏上只要点击位置靠右，
+            // 176px 宽（min-w-44）的浮窗会整个溢出屏幕右边，根本看不到。
+            left: Math.max(8, Math.min(popup.x, window.innerWidth - 184)),
+            top: Math.min(popup.y, window.innerHeight - 220),
+            boxShadow: "var(--lark-shadow-modal)",
+          }}
         >
           <div className="flex items-center justify-between mb-3">
             <span className="text-xs font-semibold text-lark-3 uppercase tracking-wider">来源</span>

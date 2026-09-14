@@ -45,7 +45,7 @@ export default function NewProjectPage() {
         title={<span className="text-sm font-medium text-lark-1">新建项目</span>}
       />
 
-      <div className="max-w-2xl mx-auto px-6 py-8 space-y-5">
+      <div className="max-w-2xl mx-auto px-4 sm:px-6 py-8 space-y-5">
         <div className="space-y-2">
           <label className="text-xs font-semibold text-lark-3 uppercase tracking-wider">项目名称</label>
           <input

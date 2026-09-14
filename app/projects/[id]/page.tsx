@@ -199,16 +199,18 @@ export default function ProjectDetailPage() {
               autoFocus
               disabled={savingName}
               maxLength={100}
-              className="text-sm font-semibold text-lark-1 bg-lark-sunken border border-lark-blue/40 rounded-md px-2 py-0.5 focus:outline-none focus:ring-2 focus:ring-lark-blue/40 min-w-[120px]"
+              className="text-sm font-semibold text-lark-1 bg-lark-sunken border border-lark-blue/40 rounded-md px-2 py-0.5 focus:outline-none focus:ring-2 focus:ring-lark-blue/40 w-full min-w-0 sm:w-auto sm:min-w-[120px]"
               // 内联 ref 每次渲染身份都变，React 会重新挂载 ref；如果在这里调 select()，
               // 每敲一个字都会全选一次，下一个字直接把前面覆盖掉。改成挂载时选一次。
               ref={nameInputRef}
             />
           ) : (
+            // truncate 少不了：项目名可以到 100 字，不截断的话它会在窄屏上换行撑高
+            // 顶栏，并且和左边的返回链接叠在一起——手机上实测就是这个样子。
             <span
-              className="text-sm font-semibold text-lark-1 cursor-pointer hover:bg-lark-sunken rounded-md px-1 py-0.5 transition-colors"
+              className="block truncate text-sm font-semibold text-lark-1 cursor-pointer hover:bg-lark-sunken rounded-md px-1 py-0.5 transition-colors"
               onDoubleClick={handleStartRename}
-              title="双击重命名"
+              title={`${project.name}（双击重命名）`}
             >
               {project.name}
             </span>
@@ -218,32 +220,36 @@ export default function ProjectDetailPage() {
           <>
             <button
               onClick={handleReembed}
+              title="重新向量化"
               disabled={reembedding}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium border border-lark-border text-lark-2 hover:bg-lark-sunken disabled:opacity-50 transition-colors"
+              className="flex items-center gap-1.5 px-2 sm:px-3 py-1.5 rounded-lg text-sm font-medium border border-lark-border text-lark-2 hover:bg-lark-sunken disabled:opacity-50 transition-colors"
             >
               <RefreshCw size={13} className={reembedding ? "animate-spin" : ""} />
-              {reembedding ? "向量化中..." : "重新向量化"}
+              {/* 手机上三个带文字的按钮加铃铛放不下，留图标去文字 */}
+              <span className="hidden sm:inline">{reembedding ? "向量化中..." : "重新向量化"}</span>
             </button>
             <button
               onClick={handleDeleteProject}
+              title="删除项目"
               disabled={deleting}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium border border-lark-danger/30 text-lark-danger hover:bg-lark-danger/5 disabled:opacity-50 transition-colors"
+              className="flex items-center gap-1.5 px-2 sm:px-3 py-1.5 rounded-lg text-sm font-medium border border-lark-danger/30 text-lark-danger hover:bg-lark-danger/5 disabled:opacity-50 transition-colors"
             >
               <Trash2 size={13} />
-              {deleting ? "删除中..." : "删除项目"}
+              <span className="hidden sm:inline">{deleting ? "删除中..." : "删除项目"}</span>
             </button>
             <button
               onClick={() => router.push(`/projects/${id}/meetings/new`)}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium bg-lark-blue text-white hover:bg-lark-blue-hover transition-colors"
+              title="新建会议"
+              className="flex items-center gap-1.5 px-2 sm:px-3 py-1.5 rounded-lg text-sm font-medium bg-lark-blue text-white hover:bg-lark-blue-hover transition-colors"
             >
               <Plus size={14} />
-              新建会议
+              <span className="hidden sm:inline">新建会议</span>
             </button>
           </>
         }
       />
 
-      <main className="max-w-3xl mx-auto px-8 py-8 space-y-6">
+      <main className="max-w-3xl mx-auto px-4 sm:px-8 py-8 space-y-6">
         <ReferenceDocsPanel projectId={id} />
 
         <ProjectAskPanel projectId={id} />

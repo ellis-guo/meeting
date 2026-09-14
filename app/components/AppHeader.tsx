@@ -30,8 +30,13 @@ interface Props {
   wide?: boolean;
 }
 
+// 窄屏上返回入口要「不换行 + 可截断」，两条缺一不可：
+// - 没有 whitespace-nowrap：「首页」会被压成竖排的"首/页"。
+// - 用 shrink-0 代替可截断：label 有时是**项目全名**（新建会议页就是），
+//   不肯收缩就会把右侧的铃铛整个顶出屏幕。
+// 所以：容器允许收缩（min-w-0），文字 truncate，图标 shrink-0。
 const BACK_CLASS =
-  "flex items-center gap-1.5 text-sm text-lark-2 hover:text-lark-1 disabled:opacity-40 transition-colors";
+  "flex items-center gap-1.5 min-w-0 text-sm text-lark-2 hover:text-lark-1 disabled:opacity-40 transition-colors";
 
 export default function AppHeader({
   variant = "page",
@@ -41,32 +46,36 @@ export default function AppHeader({
   trailing,
   wide = false,
 }: Props) {
+  // 手机上横向内距收到 px-4：375px 屏上 px-6/px-8 光左右就吃掉 48–64px。
   const className =
     variant === "app"
-      ? "flex items-center justify-between px-6 py-3 border-b border-lark-border shrink-0 print:hidden"
-      : `${wide ? "px-8" : "px-6"} py-4 border-b border-lark-border bg-lark-surface flex items-center justify-between`;
+      ? "flex items-center justify-between gap-2 px-4 sm:px-6 py-3 border-b border-lark-border shrink-0 print:hidden"
+      : `${wide ? "px-4 sm:px-8" : "px-4 sm:px-6"} py-4 border-b border-lark-border bg-lark-surface flex items-center justify-between gap-2`;
 
-  const icon = back?.icon ?? <ArrowLeft size={14} />;
+  const icon = <span className="shrink-0">{back?.icon ?? <ArrowLeft size={14} />}</span>;
+  const backLabel = <span className="truncate">{back?.label}</span>;
 
   return (
     <header className={className}>
-      <div className="flex items-center gap-3">
+      {/* min-w-0 让左侧在空间不够时可以收缩（flex 子项默认 min-width:auto，
+          不加这条标题就会把右侧按钮顶出屏幕），右侧 shrink-0 保住操作区。 */}
+      <div className="flex items-center gap-2 sm:gap-3 min-w-0">
         {back &&
           (back.href ? (
             <Link href={back.href} className={BACK_CLASS}>
               {icon}
-              {back.label}
+              {backLabel}
             </Link>
           ) : (
             <button onClick={back.onClick} disabled={back.disabled} className={BACK_CLASS}>
               {icon}
-              {back.label}
+              {backLabel}
             </button>
           ))}
-        {back && title && <span className="text-lark-border">|</span>}
+        {back && title && <span className="text-lark-border shrink-0">|</span>}
         {title}
       </div>
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
         {actions}
         <NotificationBell />
         {trailing}

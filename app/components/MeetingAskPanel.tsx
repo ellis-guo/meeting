@@ -27,7 +27,7 @@ export default function MeetingAskPanel({
   return (
     <div className="border-t border-lark-border bg-lark-surface print:hidden">
       {/* Header bar */}
-      <div className="flex items-center justify-between px-6 py-2.5 border-b border-lark-border">
+      <div className="flex items-center justify-between px-4 sm:px-6 py-2.5 border-b border-lark-border">
         <h3 className="text-xs font-semibold text-lark-3 uppercase tracking-wider">
           会议问答 {ask.messages.length > 0 && <span className="text-lark-4 normal-case ml-1">· {ask.questionCount}</span>}
         </h3>
@@ -66,7 +66,7 @@ export default function MeetingAskPanel({
       {!ask.collapsed && ask.messages.length > 0 && (
         <AskMessages
           messages={ask.messages}
-          className="px-6 py-4 max-h-80"
+          className="px-4 sm:px-6 py-4 max-h-80"
           extras={(m) =>
             m.sources && m.sources.length > 0 ? (
               <div className="mt-2 pt-2 border-t border-lark-border flex flex-wrap gap-1.5">
@@ -94,7 +94,7 @@ export default function MeetingAskPanel({
       )}
 
       {/* Input bar */}
-      <div className="px-6 py-3">
+      <div className="px-4 sm:px-6 py-3">
         <AskInput
           value={ask.question}
           onChange={ask.setQuestion}

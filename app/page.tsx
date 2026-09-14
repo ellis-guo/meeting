@@ -74,7 +74,7 @@ export default function Home() {
         trailing={<UserButton />}
       />
 
-      <main className="max-w-4xl mx-auto px-6 py-8 space-y-8">
+      <main className="max-w-4xl mx-auto px-4 sm:px-6 py-8 space-y-8">
         {/* Standalone meeting entry */}
         <Link
           href="/meetings/new"

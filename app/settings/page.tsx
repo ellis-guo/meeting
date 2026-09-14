@@ -91,7 +91,7 @@ export default function SettingsPage() {
         title={<span className="text-sm font-medium text-lark-1">设置</span>}
       />
 
-      <div className="max-w-lg mx-auto px-6 py-8 space-y-5">
+      <div className="max-w-lg mx-auto px-4 sm:px-6 py-8 space-y-5">
         {/* API Key section */}
         <section className="bg-lark-surface rounded-xl border border-lark-border shadow-card p-6 space-y-5">
           <h2 className="text-sm font-semibold text-lark-1">DashScope API Key</h2>

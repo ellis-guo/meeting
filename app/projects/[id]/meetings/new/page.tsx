@@ -31,16 +31,19 @@ export default function ProjectMeetingPage() {
 
   return (
     <div className="h-screen flex flex-col">
-      <div className="px-6 py-3.5 border-b border-lark-border bg-lark-surface shrink-0 print:hidden flex items-center gap-3">
+      {/* 这一条是手写的顶栏，不走 AppHeader（所以也没有通知铃铛）。窄屏上项目名
+          可以很长，要能截断，否则会把「新建会议」挤出屏幕。 */}
+      <div className="px-4 sm:px-6 py-3.5 border-b border-lark-border bg-lark-surface shrink-0 print:hidden flex items-center gap-2 sm:gap-3">
         <Link
           href={`/projects/${id}`}
-          className="flex items-center gap-1.5 text-sm text-lark-2 hover:text-lark-1 transition-colors"
+          className="flex items-center gap-1.5 min-w-0 text-sm text-lark-2 hover:text-lark-1 transition-colors"
+          title={projectName || "项目"}
         >
-          <ArrowLeft size={14} />
-          {projectName || "项目"}
+          <ArrowLeft size={14} className="shrink-0" />
+          <span className="truncate">{projectName || "项目"}</span>
         </Link>
-        <span className="text-lark-border">|</span>
-        <span className="text-sm text-lark-2">新建会议</span>
+        <span className="text-lark-border shrink-0">|</span>
+        <span className="text-sm text-lark-2 shrink-0">新建会议</span>
       </div>
       <div className="flex-1 overflow-hidden">
         <MeetingFlow projectId={id} />

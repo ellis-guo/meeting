@@ -21,7 +21,7 @@ export default function MeetingProcessing({
 }) {
   const failed = status === "failed";
   return (
-    <div className="min-h-screen flex items-center justify-center bg-lark-canvas px-8">
+    <div className="min-h-screen flex items-center justify-center bg-lark-canvas px-4 sm:px-8">
       <div className="max-w-md text-center space-y-4">
         {failed ? (
           <>

@@ -69,7 +69,7 @@ export default function ReferenceDocPage() {
     return (
       <div className="min-h-screen bg-lark-canvas">
         <AppHeader wide back={{ href: `/projects/${id}`, label: "返回项目" }} title="参考文件" />
-        <main className="max-w-3xl mx-auto px-8 py-16 text-center">
+        <main className="max-w-3xl mx-auto px-4 sm:px-8 py-16 text-center">
           <p className="text-sm text-lark-3">{error}</p>
         </main>
       </div>
@@ -80,7 +80,7 @@ export default function ReferenceDocPage() {
     return (
       <div className="min-h-screen bg-lark-canvas">
         <AppHeader wide back={{ href: `/projects/${id}`, label: "返回项目" }} title="参考文件" />
-        <main className="max-w-3xl mx-auto px-8 py-16 text-center">
+        <main className="max-w-3xl mx-auto px-4 sm:px-8 py-16 text-center">
           <p className="text-sm text-lark-3">加载中...</p>
         </main>
       </div>
@@ -111,7 +111,7 @@ export default function ReferenceDocPage() {
         }
       />
 
-      <main className="max-w-3xl mx-auto px-8 py-8 space-y-4">
+      <main className="max-w-3xl mx-auto px-4 sm:px-8 py-8 space-y-4">
         {doc.status === "failed" && (
           <div className="rounded-xl border border-lark-danger/30 bg-lark-danger-light px-4 py-3 flex items-start gap-3">
             <AlertCircle size={16} className="text-lark-danger shrink-0 mt-0.5" />

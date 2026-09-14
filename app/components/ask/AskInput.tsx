@@ -32,7 +32,10 @@ export default function AskInput({
         placeholder={placeholder}
         rows={1}
         disabled={disabled}
-        className="flex-1 resize-none rounded-lg border border-lark-border bg-lark-sunken px-3 py-2 text-sm text-lark-1 placeholder:text-lark-4 focus:outline-none focus:ring-1 focus:ring-lark-blue/40 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+        // rows={1} + resize-none 在窄屏上会把占位文字切掉半行：提示语一行放不下就
+        // 换行，而框子不长高。手机上给两行的高度兜底（顺便是个更好按的触摸目标），
+        // sm 及以上还原成一行。
+        className="flex-1 min-w-0 min-h-14 sm:min-h-0 resize-none rounded-lg border border-lark-border bg-lark-sunken px-3 py-2 text-sm text-lark-1 placeholder:text-lark-4 focus:outline-none focus:ring-1 focus:ring-lark-blue/40 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
       />
       <button
         onClick={onSend}
