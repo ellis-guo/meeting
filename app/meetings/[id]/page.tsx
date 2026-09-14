@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { toast } from "sonner";
@@ -9,9 +9,9 @@ import AppHeader from "@/app/components/AppHeader";
 import SummaryPanel from "@/app/components/SummaryPanel";
 import TranscriptPanel from "@/app/components/TranscriptPanel";
 import MeetingAskPanel from "@/app/components/MeetingAskPanel";
-import { Summary } from "@/app/types";
 import { useConfirm } from "@/lib/ConfirmContext";
-import { addLineNumbers } from "@/lib/utils";
+import { useMeetingDetail } from "@/lib/useMeetingDetail";
+import MeetingProcessing from "@/app/components/MeetingProcessing";
 
 type PopupState = { sourceLines: number[]; x: number; y: number } | null;
 
@@ -21,31 +21,14 @@ export default function StandaloneMeetingDetailPage() {
   const confirm = useConfirm();
   const meetingId = params.id as string;
 
-  const [summary, setSummary] = useState<Summary | null>(null);
-  const [numberedTranscript, setNumberedTranscript] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [notFound, setNotFound] = useState(false);
+  const { summary, setSummary, numberedTranscript, status, waiting, loading, notFound } =
+    useMeetingDetail(meetingId);
 
   const [isEditing, setIsEditing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
-
   const [popup, setPopup] = useState<PopupState>(null);
   const [highlightedLines, setHighlightedLines] = useState<number[]>([]);
-
-  useEffect(() => {
-    fetch(`/api/meetings/${meetingId}`)
-      .then((r) => {
-        if (r.status === 404) { setNotFound(true); return null; }
-        return r.json();
-      })
-      .then((data) => {
-        if (!data) return;
-        setSummary(data.summary as Summary);
-        setNumberedTranscript(addLineNumbers(data.transcript as string));
-      })
-      .finally(() => setLoading(false));
-  }, [meetingId]);
 
   const handleSourceClick = (sourceLines: number[], x: number, y: number) => {
     if (isEditing) return;
@@ -105,6 +88,10 @@ export default function StandaloneMeetingDetailPage() {
         <Link href="/" className="text-sm text-lark-blue hover:underline">返回首页</Link>
       </div>
     );
+  }
+
+  if (waiting || status === "failed") {
+    return <MeetingProcessing status={status} backHref={"/"} backLabel="返回首页" />;
   }
 
   const date = summary.meta.date ?? "—";

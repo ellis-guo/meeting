@@ -2,6 +2,7 @@ import { registerHandler } from "@/lib/jobRunner";
 import { runDreaming } from "@/lib/dreamHandler";
 import { runParseDocument } from "@/lib/parseHandler";
 import { runReindexMeeting } from "@/lib/reindexHandler";
+import { runSummarize } from "@/lib/summarizeHandler";
 
 // 处理函数的注册入口。
 //
@@ -19,4 +20,5 @@ export function registerJobHandlers(): void {
   registerHandler("dreaming", runDreaming);
   registerHandler("parse_document", runParseDocument);
   registerHandler("reindex", runReindexMeeting);
+  registerHandler("summarize", runSummarize);
 }
